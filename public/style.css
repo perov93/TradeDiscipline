@@ -103,6 +103,9 @@ a.tag:hover{background:var(--dim)}
 .status-strip span{font:10px var(--mono);letter-spacing:1.3px;color:var(--deep)}
 .status-strip strong{font:26px/1 var(--disp);letter-spacing:.5px;overflow-wrap:anywhere}
 .status-strip strong.money{font-size:21px}
+.motivation-panel{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:12px 0;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--gold);border-radius:8px}
+.motivation-panel>div{min-width:0}
+.motivation-panel p{margin-top:5px;color:var(--text);font-family:var(--disp);font-size:clamp(22px,2.4vw,28px);line-height:1.05;letter-spacing:1px;white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* ---------- Trade tab grids ---------- */
 .trading-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:stretch}
@@ -205,8 +208,11 @@ input[type=checkbox]{accent-color:var(--gold)}
 .upload-error{margin:0}
 
 /* ---------- Journal tab ---------- */
-.journal-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:12px;align-items:start}
-.journal-grid>.panel{margin:0}
+.journal-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,340px);gap:12px;align-items:start;min-width:0}
+.journal-grid>.panel{min-width:0;margin:0;padding:20px}
+.journal-grid>.panel>.muted.small{max-width:70ch;margin-top:8px;line-height:1.55}
+.journal-grid .journal-form{gap:12px;margin-top:18px}
+.journal-grid .journal-form label{gap:7px}
 .journal-list{margin-top:10px}
 .journal-item{padding:10px 0;border-top:1px solid var(--soft)}
 .journal-item:first-child{border-top:0}
@@ -488,6 +494,8 @@ footer span{color:#5d5b55;letter-spacing:0}
 .auth-card .primary{width:100%}
 .auth-card .small{margin-top:18px}
 .auth-card a{color:var(--gold2);text-decoration:underline;text-underline-offset:3px}
+.dedication{margin-top:22px;padding-top:16px;border-top:1px solid var(--soft)}
+.dedication p{margin-top:7px;color:var(--muted);font-size:12px;line-height:1.6}
 
 /* =====================================================================
    RESPONSIVE
@@ -496,6 +504,7 @@ footer span{color:#5d5b55;letter-spacing:0}
   .fx-session-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .analysis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .calendar-workspace{grid-template-columns:210px minmax(0,1fr);gap:16px}
+  .journal-grid{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:820px){
   .trading-overview-grid,.trading-work-grid,.journal-grid{grid-template-columns:1fr}
@@ -513,6 +522,7 @@ footer span{color:#5d5b55;letter-spacing:0}
 }
 @media(max-width:560px){
   .app{padding:12px 12px calc(28px + env(safe-area-inset-bottom))}
+  .journal-grid>.panel{padding:16px}
   .trade-sidecards{grid-template-columns:1fr}
   .form-row{grid-template-columns:1fr}
   .dashboard-tabs a{min-width:72px;padding:10px 6px;font-size:9px;letter-spacing:.8px}

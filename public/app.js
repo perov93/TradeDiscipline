@@ -247,6 +247,18 @@ if(ruleDialog&&ruleEditor){
 const dataElement=document.getElementById('trade-data');
 if(!dataElement)return;
 const trades=JSON.parse(dataElement.textContent);
+function updatePlanDeviation(form){
+  const followedPlan=form.querySelector('[name="followedPlan"]');
+  const field=form.querySelector('[data-plan-deviation]');
+  const reason=field?.querySelector('[name="planDeviationReason"]');
+  if(!followedPlan||!field||!reason)return;
+  field.hidden=followedPlan.checked;
+  reason.required=!followedPlan.checked;
+}
+document.querySelectorAll('[data-plan-follow-up]').forEach(form=>{
+  form.querySelector('[name="followedPlan"]')?.addEventListener('change',()=>updatePlanDeviation(form));
+  updatePlanDeviation(form);
+});
 document.querySelectorAll('form[data-confirm]').forEach(form=>{
   form.addEventListener('submit',event=>{
     if(!window.confirm(form.dataset.confirm))event.preventDefault();
@@ -332,6 +344,8 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
   });
 });
 const tradeFields={
+  account:document.getElementById('tradeAccount'),
+  session:document.getElementById('tradeSession'),
   instrument:document.getElementById('tradeInstrument'),
   side:document.getElementById('tradeSide'),
   outcome:document.getElementById('tradeOutcome'),
@@ -340,12 +354,15 @@ const tradeFields={
   strategy:document.getElementById('tradeStrategy'),
   emotion:document.getElementById('tradeEmotion'),
   followedPlan:document.getElementById('tradeFollowedPlan'),
+  planDeviationReason:document.getElementById('tradePlanDeviationReason'),
   notes:document.getElementById('tradeNotes')
 };
 function editTrade(id){
   const trade=tradesById.get(id);
   if(!trade)throw new Error(`Trade record ${id} is not available for editing.`);
   tradeEditor.action='/trades/'+encodeURIComponent(id)+'/edit';
+  tradeFields.account.value=trade.account||'';
+  tradeFields.session.value=trade.session||'';
   tradeFields.instrument.value=trade.instrument||'';
   tradeFields.side.value=trade.side||'';
   tradeFields.outcome.value=trade.outcome;
@@ -354,7 +371,12 @@ function editTrade(id){
   tradeFields.strategy.value=trade.strategy||'';
   tradeFields.emotion.value=trade.emotion||'calm';
   tradeFields.followedPlan.checked=trade.followedPlan!==false;
+  tradeFields.planDeviationReason.value=trade.planDeviationReason||'';
+  updatePlanDeviation(tradeEditor);
   tradeFields.notes.value=trade.notes||'';
+  document.getElementById('tradeChecklistStatus').textContent=trade.checklistCompleted===true?
+    'Checklist was completed when this trade was recorded.':
+    trade.checklistCompleted===false?'Checklist was not completed when this trade was recorded.':'Checklist status was not recorded for this older trade.';
   const existingImage=document.getElementById('tradeExistingImage'),removeImageLabel=document.getElementById('removeTradeImageLabel'),removeImage=document.getElementById('removeTradeImage');
   existingImage.replaceChildren();
   removeImage.checked=false;
@@ -789,10 +811,19 @@ function showDay(date,items){
     record.append(head);
     const chips=make('div','record-chips');
     if(trade.createdAt)chips.append(make('span','record-chip',timeFormat.format(new Date(trade.createdAt))));
+    if(trade.account)chips.append(make('span','record-chip',trade.account));
+    if(trade.session)chips.append(make('span','record-chip',trade.session));
     const emotion=trade.emotion||'calm';
     chips.append(make('span',`record-chip ${emotion==='calm'?'':'record-chip-warn'}`,emotion.toUpperCase()));
     chips.append(make('span',`record-chip ${trade.followedPlan===false?'record-chip-bad':'record-chip-good'}`,trade.followedPlan===false?'PLAN BROKEN':'PLAN FOLLOWED'));
+    if(trade.checklistCompleted===true)chips.append(make('span','record-chip','CHECKLIST COMPLETED'));
+    else if(trade.checklistCompleted===false)chips.append(make('span','record-chip record-chip-bad','CHECKLIST MISSED'));
     record.append(chips);
+    if(trade.planDeviationReason){
+      const reason=make('p','calendar-record-notes');
+      reason.append(make('span','record-label','PLAN DEVIATION'),document.createTextNode(trade.planDeviationReason));
+      record.append(reason);
+    }
     if(trade.strategy){
       const strategy=make('p','calendar-record-strategy');
       strategy.append(make('span','record-label','STRATEGY'),document.createTextNode(trade.strategy));
