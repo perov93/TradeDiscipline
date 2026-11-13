@@ -16,7 +16,8 @@ const {
     Rule,
     Trade,
     State,
-    Event
+    Event,
+    NoSetup
 } = require('./models');
 const {
     preferencesFor,
@@ -32,6 +33,9 @@ const {
     isChecklistComplete,
     planFollowUpError
 } = require('./lib/checklist');
+const {
+    recordReturnTo
+} = require('./lib/navigation');
 const app = express();
 app.set('view engine', 'ejs');
 app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
@@ -42,6 +46,7 @@ Object.assign(app.locals, {
     sessionChoices: SESSION_CHOICES
 });
 const imageDirectory = path.join(__dirname, 'uploads');
+const maxTradeImages = 10;
 fs.mkdirSync(imageDirectory, {
     recursive: true
 });
@@ -52,7 +57,7 @@ const imageUpload = multer({
     }),
     limits: {
         fileSize: 5 * 1024 * 1024,
-        files: 1
+        files: maxTradeImages
     },
     fileFilter: (req, file, done) => {
         if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) return done(null, true);
@@ -61,15 +66,25 @@ const imageUpload = multer({
         done(error)
     }
 });
-const parseTradeImage = imageUpload.single('image');
+const parseTradeImages = imageUpload.array('images', maxTradeImages);
 
-function receiveTradeImage(req, res, next) {
-    parseTradeImage(req, res, error => {
+function receiveTradeImages(req, res, next) {
+    parseTradeImages(req, res, error => {
         if (!error) return next();
-        if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).send(error.code === 'LIMIT_FILE_SIZE' ? 'Images must be 5 MB or smaller.' : 'Only one image may be uploaded.');
+        if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).send(error.code === 'LIMIT_FILE_SIZE' ? 'Images must be 5 MB or smaller.' : `You can upload up to ${maxTradeImages} images at a time.`);
         if (error.code === 'INVALID_IMAGE_TYPE') return res.status(400).send(error.message);
         next(error)
     })
+}
+function requestImages(req) {
+    return req.files || []
+}
+async function discardRequestImages(req) {
+    for (const file of requestImages(req)) {
+        await fs.promises.unlink(file.path).catch(error => {
+            if (error.code !== 'ENOENT') throw error
+        })
+    }
 }
 async function removeStoredImage(id) {
     if (!id) return;
@@ -80,6 +95,11 @@ async function removeStoredImage(id) {
         if (error.code !== 'ENOENT') throw error
     }
 }
+function storedTradeImages(trade) {
+    if (!trade) return [];
+    if (trade.images && trade.images.length) return trade.images.map(image => ({id: image.id, mime: image.mime}));
+    return trade.imageId ? [{id: trade.imageId, mime: trade.imageMime}] : []
+}
 
 function imageType(file) {
     const bytes = fs.readFileSync(file.path);
@@ -87,9 +107,6 @@ function imageType(file) {
     if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
     if (bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
     return ''
-}
-async function discardRequestImage(req) {
-    if (req.file) await removeStoredImage(req.file.filename)
 }
 app.use(helmet({
     contentSecurityPolicy: {
@@ -176,6 +193,20 @@ function dayKey(date = new Date(), tz = 'Europe/Sofia') {
         day: '2-digit'
     }).format(date)
 }
+function timeKey(date = new Date(), tz = 'Europe/Sofia') {
+    return new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23'
+    }).format(date)
+}
+const validTradeTime = value => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+const parseAccountCount = value => {
+    if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+    const count = Number(value);
+    return Number.isInteger(count) && count >= 1 && count <= 100 ? count : null
+};
 
 function startOfNextDay(date, tz) {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -252,7 +283,7 @@ function nySessionSchedule(now) {
     if (next ?.type === 'open') phase = 'PRE-MARKET IS OPEN · NY OPEN AT 9:30 AM ET';
     else if (next ?.type === 'close') phase = 'REGULAR NY SESSION · CLOSES AT 4:00 PM ET';
     const milestone = 'COUNTDOWN TO 8:30 AM NEW YORK TIME',
-        schedule = events.slice(Math.max(index - 1, 0));
+        schedule = events.slice(Math.max(index - 2, 0));
     return {
         phase,
         milestone,
@@ -289,6 +320,8 @@ app.use('/settings', require('./routes/settings')({
     stateFor,
     startOfNextDay
 }));
+app.use('/no-setup', require('./routes/no-setup')({NoSetup,auth,validId}));
+app.use('/check', require('./routes/checklist')({User,auth,stateFor}));
 async function dashboard(req, res) {
     const user = await User.findById(req.session.user.id);
     if (!user) {
@@ -307,6 +340,7 @@ async function dashboard(req, res) {
         }).sort({
             createdAt: -1
         }).lean(),
+        noSetupEntries = await NoSetup.find({user:user._id}).sort({date:-1,createdAt:-1}).lean(),
         pnlTotals = await Trade.aggregate([{
             $match: {
                 user: user._id
@@ -374,6 +408,7 @@ async function dashboard(req, res) {
         state,
         rules,
         trades,
+        noSetupEntries,
         pnlTotals,
         todays,
         losses,
@@ -390,6 +425,7 @@ async function dashboard(req, res) {
         checklistCompleted,
         today,
         dayKey,
+        timeKey,
         limits: user.limits
     })
 }
@@ -559,49 +595,59 @@ app.post('/check', auth, async (req, res, next) => {
         next(e)
     }
 });
-app.post('/trades', auth, receiveTradeImage, async (req, res, next) => {
+app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
     let committed = false;
     try {
         const outcome = String(req.body.outcome || ''),
+            tradeTime = String(req.body.tradeTime || ''),
             currency = String(req.body.currency || '').trim().toUpperCase(),
             pnl = Number(req.body.pnl || 0),
             account = String(req.body.account || '').trim(),
+            accountCount = req.body.accountCount === undefined ? 5 : parseAccountCount(req.body.accountCount),
             sessionChoice = req.body.session === undefined ? 'auto' : req.body.session,
             followedPlan = req.body.followedPlan === 'on',
             planDeviationReason = String(req.body.planDeviationReason || '').trim(),
             strategy = String(req.body.strategy || '').trim();
         if (!['WIN', 'LOSS', 'BREAKEVEN'].includes(outcome)) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, 'Choose a trade result.', '/#journal')
         }
+        if (!validTradeTime(tradeTime)) {
+            await discardRequestImages(req);
+            return fail(req, 'Enter a valid trade time.', '/#journal')
+        }
         if (!/^[A-Z]{3}$/.test(currency)) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, 'Enter a three-letter currency code.', '/#journal')
         }
         if (account.length > 80) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, 'Account must be 80 characters or fewer.', '/#journal')
         }
+        if (accountCount === null) {
+            await discardRequestImages(req);
+            return fail(req, 'Accounts traded must be a whole number between 1 and 100.', '/#journal')
+        }
         if (typeof sessionChoice !== 'string' || !SESSION_CHOICES.includes(sessionChoice)) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, 'Choose a valid trading session.', '/#journal')
         }
         const planError = planFollowUpError(followedPlan, planDeviationReason);
         if (planError) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, planError, '/#journal')
         }
         if (strategy.length > 120) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, 'Strategy must be 120 characters or fewer.', '/#journal')
         }
         if (!Number.isFinite(pnl) || Math.abs(pnl) > 100000000) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return fail(req, 'Invalid P&L amount.', '/#journal')
         }
-        const mime = req.file ? imageType(req.file) : '';
-        if (req.file && !mime) {
-            await discardRequestImage(req);
+        const images = requestImages(req).map(file => ({id: file.filename, mime: imageType(file)}));
+        if (images.some(image => !image.mime)) {
+            await discardRequestImages(req);
             return res.status(400).send('The selected file is not a supported JPEG, PNG, or WebP image.')
         }
         const user = await User.findById(req.session.user.id),
@@ -611,6 +657,7 @@ app.post('/trades', auth, receiveTradeImage, async (req, res, next) => {
             trade = await Trade.create({
                 user: user._id,
                 account,
+                accountCount,
                 session: resolveTradingSession(sessionChoice, createdAt),
                 checklistCompleted: isChecklistComplete(state, activeRuleIds),
                 planDeviationReason: followedPlan ? '' : planDeviationReason,
@@ -622,9 +669,9 @@ app.post('/trades', auth, receiveTradeImage, async (req, res, next) => {
                 notes: String(req.body.notes || '').slice(0, 3000),
                 pnl,
                 currency,
+                tradeTime,
                 createdAt,
-                imageId: req.file ?.filename || '',
-                imageMime: mime,
+                images,
                 followedPlan
             });
         committed = true;
@@ -639,58 +686,73 @@ app.post('/trades', auth, receiveTradeImage, async (req, res, next) => {
         });
         res.redirect('/#journal')
     } catch (e) {
-        if (!committed && req.file) await discardRequestImage(req).catch(cleanupError => console.error('Unable to remove rejected trade image:', cleanupError));
+        if (!committed && requestImages(req).length) await discardRequestImages(req).catch(cleanupError => console.error('Unable to remove rejected trade images:', cleanupError));
         next(e)
     }
 });
-app.post('/trades/:id/edit', auth, receiveTradeImage, async (req, res, next) => {
+app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) => {
     let committed = false;
     try {
         if (!validId(req.params.id)) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return res.sendStatus(404)
         }
         const outcome = String(req.body.outcome || ''),
+            tradeTime = String(req.body.tradeTime || ''),
             currency = String(req.body.currency || '').trim().toUpperCase(),
             pnl = Number(req.body.pnl),
             account = String(req.body.account || '').trim(),
+            accountCount = req.body.accountCount === undefined ? undefined : parseAccountCount(req.body.accountCount),
             sessionChoice = req.body.session,
-            followedPlan = req.body.followedPlan === 'on',
+            followedPlanValue = req.body.followedPlan,
+            followedPlan = followedPlanValue === 'yes' ? true : followedPlanValue === 'no' ? false : followedPlanValue === 'unknown' ? null : undefined,
             planDeviationReason = String(req.body.planDeviationReason || '').trim(),
             strategy = String(req.body.strategy || '').trim();
         if (!['WIN', 'LOSS', 'BREAKEVEN'].includes(outcome)) {
-            await discardRequestImage(req);
-            return fail(req, 'Choose a trade result.', '/#journal')
+            await discardRequestImages(req);
+            return fail(req, 'Choose a trade result.', recordReturnTo(req.body))
+        }
+        if (!validTradeTime(tradeTime)) {
+            await discardRequestImages(req);
+            return fail(req, 'Enter a valid trade time.', recordReturnTo(req.body))
         }
         if (!/^[A-Z]{3}$/.test(currency)) {
-            await discardRequestImage(req);
-            return fail(req, 'Enter a three-letter currency code.', '/#journal')
+            await discardRequestImages(req);
+            return fail(req, 'Enter a three-letter currency code.', recordReturnTo(req.body))
         }
         if (account.length > 80) {
-            await discardRequestImage(req);
-            return fail(req, 'Account must be 80 characters or fewer.', '/#journal')
+            await discardRequestImages(req);
+            return fail(req, 'Account must be 80 characters or fewer.', recordReturnTo(req.body))
+        }
+        if (accountCount === null) {
+            await discardRequestImages(req);
+            return fail(req, 'Accounts traded must be a whole number between 1 and 100.', recordReturnTo(req.body))
         }
         if (sessionChoice !== undefined &&
             (typeof sessionChoice !== 'string' || (sessionChoice !== '' && (!SESSION_CHOICES.includes(sessionChoice) || sessionChoice === 'auto')))) {
-            await discardRequestImage(req);
-            return fail(req, 'Choose a valid trading session.', '/#journal')
+            await discardRequestImages(req);
+            return fail(req, 'Choose a valid trading session.', recordReturnTo(req.body))
+        }
+        if (followedPlan === undefined) {
+            await discardRequestImages(req);
+            return fail(req, 'Choose whether the plan was followed or leave its status unknown.', recordReturnTo(req.body))
         }
         const planError = planFollowUpError(followedPlan, planDeviationReason);
         if (planError) {
-            await discardRequestImage(req);
-            return fail(req, planError, '/#journal')
+            await discardRequestImages(req);
+            return fail(req, planError, recordReturnTo(req.body))
         }
         if (strategy.length > 120) {
-            await discardRequestImage(req);
-            return fail(req, 'Strategy must be 120 characters or fewer.', '/#journal')
+            await discardRequestImages(req);
+            return fail(req, 'Strategy must be 120 characters or fewer.', recordReturnTo(req.body))
         }
         if (!Number.isFinite(pnl) || Math.abs(pnl) > 100000000) {
-            await discardRequestImage(req);
-            return fail(req, 'Invalid P&L amount.', '/#journal')
+            await discardRequestImages(req);
+            return fail(req, 'Invalid P&L amount.', recordReturnTo(req.body))
         }
-        const mime = req.file ? imageType(req.file) : '';
-        if (req.file && !mime) {
-            await discardRequestImage(req);
+        const uploadedImages = requestImages(req).map(file => ({id: file.filename, mime: imageType(file)}));
+        if (uploadedImages.some(image => !image.mime)) {
+            await discardRequestImages(req);
             return res.status(400).send('The selected file is not a supported JPEG, PNG, or WebP image.')
         }
         const trade = await Trade.findOne({
@@ -698,11 +760,20 @@ app.post('/trades/:id/edit', auth, receiveTradeImage, async (req, res, next) => 
             user: req.session.user.id
         });
         if (!trade) {
-            await discardRequestImage(req);
+            await discardRequestImages(req);
             return res.sendStatus(404)
         }
-        const previousImage = trade.imageId;
+        const previousImages = storedTradeImages(trade);
+        const requestedRemovals = req.body.removeImages === undefined ? [] :
+            Array.isArray(req.body.removeImages) ? req.body.removeImages : [req.body.removeImages];
+        const removeIds = new Set(requestedRemovals.filter(id => typeof id === 'string'));
+        const retainedImages = previousImages.filter(image => !removeIds.has(image.id));
+        if (retainedImages.length + uploadedImages.length > maxTradeImages) {
+            await discardRequestImages(req);
+            return fail(req, `A trade can have up to ${maxTradeImages} images. Remove an image before adding another.`, recordReturnTo(req.body))
+        }
         trade.account = account;
+        if (accountCount !== undefined) trade.accountCount = accountCount;
         if (sessionChoice !== undefined) trade.session = sessionChoice;
         trade.instrument = String(req.body.instrument || '').trim().slice(0, 40);
         trade.side = ['BUY', 'SELL'].includes(req.body.side) ? req.body.side : '';
@@ -710,37 +781,36 @@ app.post('/trades/:id/edit', auth, receiveTradeImage, async (req, res, next) => 
         trade.outcome = outcome;
         trade.pnl = pnl;
         trade.currency = currency;
+        trade.tradeTime = tradeTime;
         trade.emotion = ['calm', 'fomo', 'revenge', 'other'].includes(req.body.emotion) ? req.body.emotion : 'other';
         trade.followedPlan = followedPlan;
-        trade.planDeviationReason = followedPlan ? '' : planDeviationReason;
+        trade.planDeviationReason = followedPlan === false ? planDeviationReason : '';
         trade.notes = String(req.body.notes || '').slice(0, 3000);
-        if (req.file) {
-            trade.imageId = req.file.filename;
-            trade.imageMime = mime
-        } else if (req.body.removeImage === 'on') {
-            trade.imageId = '';
-            trade.imageMime = ''
-        }
+        trade.images = [...retainedImages, ...uploadedImages];
+        trade.imageId = '';
+        trade.imageMime = '';
         await trade.save();
         committed = true;
-        if (previousImage && previousImage !== trade.imageId) await removeStoredImage(previousImage);
-        res.redirect('/#journal')
+        const removedImages = previousImages.filter(image => removeIds.has(image.id));
+        for (const image of removedImages) await removeStoredImage(image.id);
+        res.redirect(recordReturnTo(req.body))
     } catch (e) {
-        if (!committed && req.file) await discardRequestImage(req).catch(cleanupError => console.error('Unable to remove rejected trade image:', cleanupError));
+        if (!committed && requestImages(req).length) await discardRequestImages(req).catch(cleanupError => console.error('Unable to remove rejected trade images:', cleanupError));
         next(e)
     }
 });
-app.get('/trades/:id/image', auth, async (req, res, next) => {
+app.get('/trades/:id/images/:imageId', auth, async (req, res, next) => {
     try {
-        if (!validId(req.params.id)) return res.sendStatus(404);
+        if (!validId(req.params.id) || !/^[0-9a-f-]{36}$/i.test(req.params.imageId)) return res.sendStatus(404);
         const trade = await Trade.findOne({
             _id: req.params.id,
             user: req.session.user.id
-        }).select('imageId imageMime').lean();
-        if (!trade ?.imageId || !trade.imageMime || !/^[0-9a-f-]{36}$/i.test(trade.imageId)) return res.sendStatus(404);
+        }).select('images imageId imageMime').lean();
+        const image = trade && storedTradeImages(trade).find(item => item.id === req.params.imageId);
+        if (!image || !image.mime) return res.sendStatus(404);
         res.set('Cache-Control', 'private, no-store');
         res.set('X-Content-Type-Options', 'nosniff');
-        res.type(trade.imageMime).sendFile(path.join(imageDirectory, trade.imageId), error => {
+        res.type(image.mime).sendFile(path.join(imageDirectory, image.id), error => {
             if (error) next(error)
         })
     } catch (e) {
@@ -754,8 +824,8 @@ app.post('/trades/:id/delete', auth, async (req, res, next) => {
             _id: req.params.id,
             user: req.session.user.id
         });
-        if (trade ?.imageId) await removeStoredImage(trade.imageId);
-        res.redirect('/#journal')
+        for (const image of storedTradeImages(trade)) await removeStoredImage(image.id);
+        res.redirect(recordReturnTo(req.body))
     } catch (e) {
         next(e)
     }
@@ -779,13 +849,15 @@ app.post('/stop', auth, async (req, res, next) => {
 });
 app.get('/export', auth, async (req, res, next) => {
     try {
-        const rows = await Trade.find({
-            user: req.session.user.id
-        }).sort({
-            createdAt: -1
-        }).lean();
+        const [rows, user] = await Promise.all([
+            Trade.find({user: req.session.user.id}).sort({createdAt: -1}).lean(),
+            User.findById(req.session.user.id).select('timezone').lean()
+        ]);
         const quote = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-        res.type('text/csv').attachment('discipline-trades.csv').send(['Date,Account,Session,ChecklistCompleted,Instrument,Side,Strategy,Outcome,PnL,Currency,Emotion,FollowedPlan,PlanDeviationReason,Notes', ...rows.map(t => [t.createdAt.toISOString(), t.account || '', t.session || '', t.checklistCompleted ?? '', t.instrument, t.side, t.strategy, t.outcome, t.pnl, t.currency || 'USD', t.emotion, t.followedPlan, t.planDeviationReason || '', t.notes].map(quote).join(','))].join('\r\n'))
+        res.type('text/csv').attachment('discipline-trades.csv').send(['Date,TradeTime,Account,AccountCount,ApproxPnlPerAccount,Session,ChecklistCompleted,Instrument,Side,Strategy,Outcome,PnL,Currency,Emotion,FollowedPlan,PlanDeviationReason,Notes', ...rows.map(t => {
+            const accountCount = Math.max(1, Number(t.accountCount) || 1);
+            return [t.createdAt.toISOString(), t.tradeTime || timeKey(t.createdAt, user.timezone), t.account || '', accountCount, (Number(t.pnl) || 0) / accountCount, t.session || '', t.checklistCompleted ?? '', t.instrument, t.side, t.strategy, t.outcome, t.pnl, t.currency || 'USD', t.emotion, t.followedPlan, t.planDeviationReason || '', t.notes].map(quote).join(',')
+        })].join('\r\n'))
     } catch (e) {
         next(e)
     }

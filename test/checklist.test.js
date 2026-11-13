@@ -21,6 +21,7 @@ test('legacy trades keep unknown checklist history and new records default safel
 
 test('plan deviation explanations are required only when the plan was not followed',()=>{
   assert.equal(planFollowUpError(true,''),null);
+  assert.equal(planFollowUpError(null,''),null);
   assert.equal(planFollowUpError(false,'I entered before confirmation.'),null);
   assert.equal(planFollowUpError(false,''),'Explain why you did not follow your plan.');
   assert.equal(planFollowUpError(true,'x'.repeat(501)),'The plan deviation reason must be 500 characters or fewer.');

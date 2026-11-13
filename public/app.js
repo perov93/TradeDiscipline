@@ -48,6 +48,7 @@ document.querySelectorAll('[data-record-outcome]').forEach(button=>button.addEve
   const outcome=document.getElementById('journalOutcome');
   if(!journal||!outcome)return;
   outcome.value=button.dataset.recordOutcome;
+  updateOutcomePnlWarning(document.getElementById('journalTradeForm'));
   activateTab('journal');
   if(window.location.hash!=='#journal')window.history.pushState(null,'','#journal');
   document.getElementById('journalTradeForm')?.scrollIntoView({behavior:'smooth',block:'start'});
@@ -57,8 +58,28 @@ window.addEventListener('hashchange',tabFromHash);
 window.addEventListener('popstate',tabFromHash);
 tabFromHash();
 
+const checklistForm=document.getElementById('checklistForm');
+if(checklistForm){
+  const checkboxes=[...checklistForm.querySelectorAll('input[name="rules"]')];
+  const progress=document.getElementById('checklistProgress');
+  const summaryValue=document.getElementById('checklistProgressValue');
+  const count=document.getElementById('checklistCount');
+  const segments=[...progress.querySelectorAll('i')];
+  const updateChecklistProgress=()=>{
+    const checked=checkboxes.filter(input=>input.checked).length;
+    count.textContent=`${checked} OF ${checkboxes.length}`;
+    summaryValue.textContent=`${checked} of ${checkboxes.length}`;
+    progress.setAttribute('aria-valuenow',String(checked));
+    segments.forEach((segment,index)=>segment.classList.toggle('is-filled',index<checked));
+  };
+  checklistForm.addEventListener('change',updateChecklistProgress);
+  checklistForm.addEventListener('reset',()=>setTimeout(updateChecklistProgress,0));
+  updateChecklistProgress();
+}
+
 const countdowns=[...document.querySelectorAll('[data-until]')];
 if(countdowns.length){
+  const reloadKey='discipline-unlock-reloaded';
   const tick=()=>{
     countdowns.forEach(timer=>{
       const until=Date.parse(timer.dataset.until||'');
@@ -68,6 +89,14 @@ if(countdowns.length){
       timer.setAttribute('aria-label',`${days} days, ${hours} hours, ${minutes} minutes, ${remainingSeconds} seconds until trading is available`);
       timer.classList.toggle('counting',seconds>0);
     });
+    const expired=countdowns.find(timer=>{
+      const until=Date.parse(timer.dataset.until||'');
+      return Number.isFinite(until)&&until<=Date.now();
+    });
+    if(expired&&sessionStorage.getItem(reloadKey)!==expired.dataset.until){
+      sessionStorage.setItem(reloadKey,expired.dataset.until);
+      window.location.reload();
+    }
   };
   tick();
   setInterval(tick,1000);
@@ -79,37 +108,35 @@ if(nySessionTimer){
   const accountTimezone=nySessionTimer.dataset.accountTimezone||'Europe/Sofia';
   const phase=document.getElementById('nySessionPhase');
   const milestone=document.getElementById('nySessionMilestone');
-  const target=document.getElementById('nySessionTarget');
   const panel=document.getElementById('nySessionPanel');
   const badge=document.getElementById('nySessionBadge');
   const liveBanner=document.getElementById('nyLiveBanner');
   const liveLabel=document.getElementById('nyLiveLabel');
   const liveCountdown=document.getElementById('nyLiveCountdown');
-  const clockText=ms=>{const total=Math.max(0,Math.ceil(ms/1000));return `${Math.floor(total/3600)}h ${String(Math.floor(total%3600/60)).padStart(2,'0')}m ${String(total%60).padStart(2,'0')}s`};
-  const formatTarget=date=>{
-    const format=timeZone=>new Intl.DateTimeFormat('en-GB',{timeZone,weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'}).format(date);
-    if(accountTimezone==='Europe/Sofia')return[
-      {label:'New York',value:format('America/New_York')},
-      {label:'Your time + Bulgaria · Europe/Sofia',value:format('Europe/Sofia')}
-    ];
-    return[
-      {label:`Your time · ${accountTimezone}`,value:format(accountTimezone)},
-      {label:'New York',value:format('America/New_York')},
-      {label:'Bulgaria',value:format('Europe/Sofia')}
-    ];
+  const timelineNow=document.getElementById('nySessionNow');
+  const sessionTimes={
+    premarket:{time:document.getElementById('nyTimePremarket'),date:document.getElementById('nyDatePremarket')},
+    open:{time:document.getElementById('nyTimeOpen'),date:document.getElementById('nyDateOpen')},
+    close:{time:document.getElementById('nyTimeClose'),date:document.getElementById('nyDateClose')}
   };
+  const clockText=ms=>{const total=Math.max(0,Math.ceil(ms/1000));return `${Math.floor(total/3600)}h ${String(Math.floor(total%3600/60)).padStart(2,'0')}m ${String(total%60).padStart(2,'0')}s`};
   const tickNySession=()=>{
     const now=Date.now();
     const nextEventIndex=schedule.findIndex(event=>Date.parse(event.at)>now);
     const nextEvent=schedule[nextEventIndex];
     const nextPremarket=schedule.find(event=>event.type==='premarket'&&Date.parse(event.at)>now);
-    if(!nextPremarket){
+    if(!nextEvent){
       nySessionTimer.textContent='Schedule unavailable';
       phase.textContent='REFRESH FOR UPCOMING PRE-MARKET';
-      target.textContent='';
+      liveBanner.hidden=true;
+      panel.classList.remove('is-premarket','is-regular');
+      badge.textContent='SCHEDULE UNAVAILABLE';
+      milestone.textContent='REFRESH FOR UPCOMING PRE-MARKET';
+      timelineNow.hidden=true;
+      Object.values(sessionTimes).forEach(({time,date})=>{time.textContent='—';date.textContent=''});
       return;
     }
-    const remaining=Math.max(0,Math.ceil((Date.parse(nextPremarket.at)-now)/1000));
+    const remaining=Math.max(0,Math.ceil((Date.parse(nextEvent.at)-now)/1000));
     const days=Math.floor(remaining/86400),hours=Math.floor(remaining%86400/3600),minutes=Math.floor(remaining%3600/60),seconds=remaining%60;
     nySessionTimer.textContent=`${days}d ${String(hours).padStart(2,'0')}h ${String(minutes).padStart(2,'0')}m ${String(seconds).padStart(2,'0')}s`;
     const live=nextEvent?.type==='open'?'premarket':nextEvent?.type==='close'?'regular':'';
@@ -122,21 +149,32 @@ if(nySessionTimer){
     }
     panel.classList.toggle('is-premarket',live==='premarket');
     panel.classList.toggle('is-regular',live==='regular');
-    badge.textContent=live==='premarket'?'PRE-MARKET OPEN':live==='regular'?'NY SESSION OPEN':'US EQUITIES · EASTERN TIME';
+    badge.textContent=live==='premarket'?'PRE-MARKET OPEN':live==='regular'?'NY SESSION OPEN':`OPENS IN ${clockText(Date.parse(nextEvent.at)-now)}`;
     liveBanner.hidden=!live;
     if(live){
       liveLabel.textContent=live==='premarket'?'PRE-MARKET OPEN':'NY SESSION OPEN';
       liveCountdown.textContent=`${live==='premarket'?'NY OPEN IN':'CLOSES IN'} ${clockText(Date.parse(nextEvent.at)-now)}`;
     }
-    milestone.textContent='NEXT PRE-MARKET · 8:30 AM ET';
-    target.replaceChildren();
-    formatTarget(new Date(nextPremarket.at)).forEach(({label,value})=>{
-      const row=document.createElement('span');
-      row.className='session-time-row';
-      const name=document.createElement('strong');
-      name.textContent=`${label}: `;
-      row.append(name,document.createTextNode(value));
-      target.append(row);
+    milestone.textContent=live==='premarket'?'NY OPENS · 9:30 AM ET':live==='regular'?'NY CLOSES · 4:00 PM ET':'NEXT PRE-MARKET · 8:30 AM ET';
+    timelineNow.hidden=!live;
+    if(live){
+      const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(now));
+      const value=type=>Number(parts.find(part=>part.type===type).value);
+      const minutes=value('hour')*60+value('minute')+value('second')/60;
+      timelineNow.style.left=`${Math.max(0,Math.min(100,(minutes-510)/450*100))}%`;
+    }
+    const premarketIndex=live?
+      schedule.findLastIndex((event,index)=>index<nextEventIndex&&event.type==='premarket'):
+      schedule.findIndex(event=>event===nextPremarket);
+    const sessionEvents=premarketIndex<0?[]:schedule.slice(premarketIndex,premarketIndex+3);
+    const timeFormat=new Intl.DateTimeFormat('en-GB',{timeZone:accountTimezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    const dateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:accountTimezone,weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
+    const shortDateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:accountTimezone,weekday:'short',day:'numeric',month:'short'});
+    Object.entries(sessionTimes).forEach(([type,{time,date}])=>{
+      const event=sessionEvents.find(item=>item.type===type);
+      time.textContent=event?timeFormat.format(new Date(event.at)):'—';
+      time.title=event?dateFormat.format(new Date(event.at)):'Schedule unavailable';
+      date.textContent=event?shortDateFormat.format(new Date(event.at)):'';
     });
   };
   tickNySession();
@@ -247,17 +285,46 @@ if(ruleDialog&&ruleEditor){
 const dataElement=document.getElementById('trade-data');
 if(!dataElement)return;
 const trades=JSON.parse(dataElement.textContent);
+const noSetupEntries=JSON.parse(document.getElementById('no-setup-data').textContent);
 function updatePlanDeviation(form){
   const followedPlan=form.querySelector('[name="followedPlan"]');
   const field=form.querySelector('[data-plan-deviation]');
   const reason=field?.querySelector('[name="planDeviationReason"]');
   if(!followedPlan||!field||!reason)return;
-  field.hidden=followedPlan.checked;
-  reason.required=!followedPlan.checked;
+  const status=followedPlan.type==='checkbox'?(followedPlan.checked?'yes':'no'):followedPlan.value;
+  const needsReason=status==='no';
+  field.hidden=!needsReason;
+  reason.required=needsReason;
 }
 document.querySelectorAll('[data-plan-follow-up]').forEach(form=>{
   form.querySelector('[name="followedPlan"]')?.addEventListener('change',()=>updatePlanDeviation(form));
   updatePlanDeviation(form);
+});
+function outcomePnlMismatch(outcome,pnl){
+  if(!Number.isFinite(pnl))return false;
+  if(outcome==='WIN')return pnl<=0;
+  if(outcome==='LOSS')return pnl>=0;
+  if(outcome==='BREAKEVEN')return pnl!==0;
+  return false;
+}
+function updateOutcomePnlWarning(form){
+  const outcome=form.querySelector('[name="outcome"]');
+  const pnl=form.querySelector('[name="pnl"]');
+  const warning=form.querySelector('[data-outcome-pnl-warning]');
+  const mismatch=outcomePnlMismatch(outcome.value,Number(pnl.value));
+  warning.hidden=!mismatch;
+  warning.textContent=warning.hidden?'':'Outcome and P&L do not match. Check these values before saving.';
+}
+document.querySelectorAll('[data-outcome-pnl]').forEach(form=>{
+  const outcome=form.querySelector('[name="outcome"]');
+  const pnl=form.querySelector('[name="pnl"]');
+  const mismatch=()=>outcomePnlMismatch(outcome.value,Number(pnl.value));
+  outcome.addEventListener('change',()=>updateOutcomePnlWarning(form));
+  pnl.addEventListener('input',()=>updateOutcomePnlWarning(form));
+  form.addEventListener('submit',event=>{
+    if(mismatch()&&!window.confirm('The outcome and P&L do not match. Save this record anyway?'))event.preventDefault();
+  });
+  updateOutcomePnlWarning(form);
 });
 document.querySelectorAll('form[data-confirm]').forEach(form=>{
   form.addEventListener('submit',event=>{
@@ -270,21 +337,84 @@ const tradesById=new Map(trades.map(trade=>[trade.id,trade]));
 const imageDialog=document.getElementById('imagePreviewDialog');
 const fullImage=document.getElementById('imagePreviewFull');
 const imagePreviewStatus=document.getElementById('imagePreviewStatus');
+const imageViewport=document.getElementById('imagePreviewViewport');
+const imageZoomIn=document.getElementById('imageZoomIn');
+const imageZoomOut=document.getElementById('imageZoomOut');
+const imageZoomReset=document.getElementById('imageZoomReset');
+let imageZoom=1;
+let imageDrag=null;
+const updateImageZoom=()=>{
+  const fitWidth=Math.min(fullImage.naturalWidth,imageViewport.clientWidth,
+    imageViewport.clientHeight*fullImage.naturalWidth/fullImage.naturalHeight);
+  fullImage.style.width=`${fitWidth*imageZoom}px`;
+  imageZoomReset.textContent=`${Math.round(imageZoom*100)}%`;
+  imageZoomOut.disabled=imageZoom<=1;
+  imageZoomIn.disabled=imageZoom>=4;
+  imageZoomReset.disabled=imageZoom===1;
+  imageViewport.classList.toggle('is-zoomed',imageZoom>1);
+};
+const changeImageZoom=zoom=>{
+  const oldWidth=fullImage.clientWidth,oldHeight=fullImage.clientHeight;
+  const centerX=imageViewport.scrollLeft+imageViewport.clientWidth/2;
+  const centerY=imageViewport.scrollTop+imageViewport.clientHeight/2;
+  imageZoom=Math.max(1,Math.min(4,zoom));
+  updateImageZoom();
+  imageViewport.scrollLeft=centerX*fullImage.clientWidth/oldWidth-imageViewport.clientWidth/2;
+  imageViewport.scrollTop=centerY*fullImage.clientHeight/oldHeight-imageViewport.clientHeight/2;
+};
+imageZoomIn.addEventListener('click',()=>changeImageZoom(imageZoom+0.25));
+imageZoomOut.addEventListener('click',()=>changeImageZoom(imageZoom-0.25));
+imageZoomReset.addEventListener('click',()=>changeImageZoom(1));
+imageViewport.addEventListener('pointerdown',event=>{
+  if(imageZoom<=1||!event.isPrimary||event.button!==0)return;
+  imageDrag={pointerId:event.pointerId,x:event.clientX,y:event.clientY,left:imageViewport.scrollLeft,top:imageViewport.scrollTop};
+  imageViewport.setPointerCapture(event.pointerId);
+  imageViewport.classList.add('is-dragging');
+});
+imageViewport.addEventListener('pointermove',event=>{
+  if(!imageDrag||event.pointerId!==imageDrag.pointerId)return;
+  imageViewport.scrollLeft=imageDrag.left+imageDrag.x-event.clientX;
+  imageViewport.scrollTop=imageDrag.top+imageDrag.y-event.clientY;
+});
+const endImageDrag=event=>{
+  if(!imageDrag||event.pointerId!==imageDrag.pointerId)return;
+  imageDrag=null;
+  imageViewport.classList.remove('is-dragging');
+};
+imageViewport.addEventListener('pointerup',endImageDrag);
+imageViewport.addEventListener('pointercancel',endImageDrag);
+imageViewport.addEventListener('lostpointercapture',endImageDrag);
+window.addEventListener('resize',()=>{if(imageDialog.open&&!fullImage.hidden)updateImageZoom()});
 fullImage.addEventListener('load',()=>{
   imagePreviewStatus.hidden=true;
+  imageViewport.hidden=false;
   fullImage.hidden=false;
+  imageZoom=1;
+  imageViewport.scrollLeft=0;
+  imageViewport.scrollTop=0;
+  updateImageZoom();
 });
 fullImage.addEventListener('error',()=>{
   imagePreviewStatus.textContent='Could not load this image. Close the preview and try again.';
   imagePreviewStatus.hidden=false;
+  imageViewport.hidden=true;
+  fullImage.hidden=true;
+  imageZoomIn.disabled=true;
+  imageZoomOut.disabled=true;
+  imageZoomReset.disabled=true;
 });
 function bindImagePreview(button){
   button.addEventListener('click',()=>{
     imagePreviewStatus.textContent='Loading image preview…';
     imagePreviewStatus.hidden=false;
+    imageViewport.hidden=true;
     fullImage.hidden=true;
-    fullImage.src=button.dataset.imageSrc;
+    imageZoomIn.disabled=true;
+    imageZoomOut.disabled=true;
+    imageZoomReset.disabled=true;
+    imageZoomReset.textContent='100%';
     imageDialog.showModal();
+    fullImage.src=button.dataset.imageSrc;
     if(fullImage.complete){
       if(fullImage.naturalWidth)fullImage.dispatchEvent(new Event('load'));
       else fullImage.dispatchEvent(new Event('error'));
@@ -296,35 +426,53 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
   const input=form.querySelector('[data-image-input]');
   const preview=form.querySelector('[data-upload-preview]');
   const error=form.querySelector('.upload-error');
-  input.addEventListener('change',()=>{
+  let previewUrls=[];
+  const clearPreview=()=>{
+    previewUrls.forEach(url=>URL.revokeObjectURL(url));
+    previewUrls=[];
     preview.replaceChildren();
     preview.hidden=true;
+  };
+  form.clearImagePreview=clearPreview;
+  input.addEventListener('change',()=>{
+    clearPreview();
     error.hidden=true;
-    const file=input.files[0];
-    if(!file)return;
-    if(file.size>5*1024*1024){
+    const files=[...input.files];
+    if(!files.length)return;
+    if(files.length>10||files.some(file=>file.size>5*1024*1024)){
       input.value='';
-      error.textContent='Images must be 5 MB or smaller.';
+      error.textContent=files.length>10?'You can upload up to 10 images at a time.':'Images must be 5 MB or smaller.';
       error.hidden=false;
       return;
     }
-    const objectUrl=URL.createObjectURL(file);
-    const button=document.createElement('button');
-    button.type='button';
-    button.className='image-preview-trigger';
-    button.dataset.imageSrc=objectUrl;
-    button.setAttribute('aria-label','Preview selected trade image');
-    const image=document.createElement('img');
-    image.src=objectUrl;
-    image.alt='Selected trade image thumbnail';
-    button.append(image);
-    bindImagePreview(button);
-    preview.append(button);
+    files.forEach((file,index)=>{
+      const objectUrl=URL.createObjectURL(file);
+      previewUrls.push(objectUrl);
+      const button=document.createElement('button');
+      button.type='button';
+      button.className='image-preview-trigger';
+      button.dataset.imageSrc=objectUrl;
+      button.setAttribute('aria-label',`Preview selected trade image ${index+1}`);
+      const image=document.createElement('img');
+      image.src=objectUrl;
+      image.alt=`Selected trade image ${index+1}`;
+      button.append(image);
+      bindImagePreview(button);
+      preview.append(button);
+    });
     preview.hidden=false;
   });
   form.addEventListener('submit',async event=>{
+    if(event.defaultPrevented)return;
     event.preventDefault();
     error.hidden=true;
+    const existingCount=form.querySelectorAll('#tradeExistingImage .trade-existing-image').length;
+    const removingCount=form.querySelectorAll('#tradeExistingImage input[name="removeImages"]:checked').length;
+    if(existingCount-removingCount+input.files.length>10){
+      error.textContent='A trade can have up to 10 images. Remove an image before adding another.';
+      error.hidden=false;
+      return;
+    }
     const submit=form.querySelector('[type="submit"]');
     submit.disabled=true;
     try{
@@ -345,7 +493,9 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
 });
 const tradeFields={
   account:document.getElementById('tradeAccount'),
+  accountCount:document.getElementById('tradeAccountCount'),
   session:document.getElementById('tradeSession'),
+  tradeTime:document.getElementById('tradeTime'),
   instrument:document.getElementById('tradeInstrument'),
   side:document.getElementById('tradeSide'),
   outcome:document.getElementById('tradeOutcome'),
@@ -362,41 +512,51 @@ function editTrade(id){
   if(!trade)throw new Error(`Trade record ${id} is not available for editing.`);
   tradeEditor.action='/trades/'+encodeURIComponent(id)+'/edit';
   tradeFields.account.value=trade.account||'';
+  tradeFields.accountCount.value=String(Number(trade.accountCount)||1);
   tradeFields.session.value=trade.session||'';
+  tradeFields.tradeTime.value=trade.tradeTime||'';
   tradeFields.instrument.value=trade.instrument||'';
   tradeFields.side.value=trade.side||'';
   tradeFields.outcome.value=trade.outcome;
   tradeFields.pnl.value=Number(trade.pnl||0).toFixed(2);
+  updateOutcomePnlWarning(tradeEditor);
   tradeFields.currency.value=trade.currency||'USD';
   tradeFields.strategy.value=trade.strategy||'';
   tradeFields.emotion.value=trade.emotion||'calm';
-  tradeFields.followedPlan.checked=trade.followedPlan!==false;
+  tradeFields.followedPlan.value=trade.followedPlan===true?'yes':trade.followedPlan===false?'no':'unknown';
   tradeFields.planDeviationReason.value=trade.planDeviationReason||'';
   updatePlanDeviation(tradeEditor);
+  document.getElementById('tradeReturnDate').value=selectedCalendarDate||trade.date;
   tradeFields.notes.value=trade.notes||'';
   document.getElementById('tradeChecklistStatus').textContent=trade.checklistCompleted===true?
     'Checklist was completed when this trade was recorded.':
     trade.checklistCompleted===false?'Checklist was not completed when this trade was recorded.':'Checklist status was not recorded for this older trade.';
-  const existingImage=document.getElementById('tradeExistingImage'),removeImageLabel=document.getElementById('removeTradeImageLabel'),removeImage=document.getElementById('removeTradeImage');
+  const existingImage=document.getElementById('tradeExistingImage');
   existingImage.replaceChildren();
-  removeImage.checked=false;
-  removeImageLabel.hidden=!trade.hasImage;
-  if(trade.hasImage){
+  (trade.images||[]).forEach((imageId,index)=>{
+    const item=document.createElement('div');
+    item.className='trade-existing-image';
     const preview=document.createElement('button');
     preview.type='button';
     preview.className='image-preview-trigger';
-    preview.dataset.imageSrc=`/trades/${encodeURIComponent(id)}/image`;
-    preview.setAttribute('aria-label','Preview current trade image');
+    preview.dataset.imageSrc=`/trades/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`;
+    preview.setAttribute('aria-label',`Preview current trade image ${index+1}`);
     const image=document.createElement('img');
     image.src=preview.dataset.imageSrc;
-    image.alt='Current trade attachment';
+    image.alt=`Current trade attachment ${index+1}`;
     preview.append(image);
     bindImagePreview(preview);
-    existingImage.append(preview);
-  }
-  const uploadPreview=tradeEditor.querySelector('[data-upload-preview]');
-  uploadPreview.replaceChildren();
-  uploadPreview.hidden=true;
+    const removeLabel=document.createElement('label');
+    removeLabel.className='inline-check';
+    const remove=document.createElement('input');
+    remove.type='checkbox';
+    remove.name='removeImages';
+    remove.value=imageId;
+    removeLabel.append(remove,document.createTextNode(' REMOVE'));
+    item.append(preview,removeLabel);
+    existingImage.append(item);
+  });
+  tradeEditor.clearImagePreview();
   tradeEditor.querySelector('[data-image-input]').value='';
   tradeEditor.querySelector('.upload-error').hidden=true;
   document.getElementById('tradeEditDate').textContent=`TRADE DATE · ${trade.date}`;
@@ -407,17 +567,21 @@ document.querySelectorAll('.trade-edit-trigger').forEach(button=>button.addEvent
 tradeDialog.addEventListener('click',event=>{if(event.target===tradeDialog)tradeDialog.close()});
 imageDialog.addEventListener('click',event=>{if(event.target===imageDialog)imageDialog.close()});
 tradeFields.currency.addEventListener('input',()=>{tradeFields.currency.value=tradeFields.currency.value.toUpperCase()});
-document.getElementById('removeTradeImage').addEventListener('change',event=>{
-  document.getElementById('tradeExistingImage').hidden=event.target.checked;
-});
 
 const grid=document.getElementById('calendarGrid');
 const calendarTimezone=grid.dataset.timezone||'Europe/Sofia';
 const calendarToday=grid.dataset.today||new Intl.DateTimeFormat('en-CA',{
   timeZone:calendarTimezone,year:'numeric',month:'2-digit',day:'2-digit'
 }).format(new Date());
+const requestedCalendarDate=new URLSearchParams(window.location.search).get('calendarDate')||'';
+const requestedCalendarDateObject=new Date(`${requestedCalendarDate}T00:00:00Z`);
+const validRequestedCalendarDate=/^\d{4}-\d{2}-\d{2}$/.test(requestedCalendarDate)&&
+  Number.isFinite(requestedCalendarDateObject.getTime())&&
+  requestedCalendarDateObject.toISOString().slice(0,10)===requestedCalendarDate;
+const initialCalendarDate=validRequestedCalendarDate?requestedCalendarDate:calendarToday;
 const [calendarYear,calendarMonth]=calendarToday.split('-').map(Number);
-const current=new Date(calendarYear,calendarMonth-1,1);
+const [initialYear,initialMonth]=initialCalendarDate.split('-').map(Number);
+const current=new Date(initialYear,initialMonth-1,1);
 const title=document.getElementById('monthTitle');
 const monthPnl=document.getElementById('monthPnl');
 const selected=document.getElementById('selectedDay');
@@ -432,10 +596,11 @@ calendarCurrencies.forEach(currency=>{
 });
 let selectedCalendarCurrency=defaultCalendarCurrency;
 calendarCurrency.value=selectedCalendarCurrency;
-let selectedCalendarDate='';
+let selectedCalendarDate=validRequestedCalendarDate?requestedCalendarDate:'';
 const analysisRangeButtons=[...document.querySelectorAll('[data-analysis-range]')];
 const analysisPeriodLabel=document.getElementById('analysisPeriodLabel');
 const analysisTradeCount=document.getElementById('analysisTradeCount');
+const analysisNoSetupCount=document.getElementById('analysisNoSetupCount');
 const analysisWinRate=document.getElementById('analysisWinRate');
 const analysisPlanRate=document.getElementById('analysisPlanRate');
 const analysisNetPnl=document.getElementById('analysisNetPnl');
@@ -456,18 +621,18 @@ const currencyTotals=items=>items.reduce((totals,trade)=>{
 const formatTotals=totals=>[...totals].sort(([a],[b])=>a.localeCompare(b))
   .map(([currency,value])=>`${currency} ${value>0?'+':''}${value.toFixed(2)}`).join(' · ');
 const formatPnl=(value,currency)=>`${currency} ${Number(value||0)>0?'+':''}${Number(value||0).toFixed(2)}`;
-function getAnalysisTrades(){
+function getAnalysisRecords(records){
   const year=current.getFullYear(),month=String(current.getMonth()+1).padStart(2,'0');
   if(analysisRange==='month'){
     const prefix=`${year}-${month}`;
-    return trades.filter(trade=>trade.date.startsWith(prefix));
+    return records.filter(record=>record.date.startsWith(prefix));
   }
-  if(analysisRange==='all')return trades.slice();
+  if(analysisRange==='all')return records.slice();
   const todayOrdinal=Date.parse(`${calendarToday}T00:00:00Z`);
   const rangeDays=analysisRange==='7d'?7:30;
   const startOrdinal=todayOrdinal-(rangeDays-1)*86400000;
-  return trades.filter(trade=>{
-    const ordinal=Date.parse(`${trade.date}T00:00:00Z`);
+  return records.filter(record=>{
+    const ordinal=Date.parse(`${record.date}T00:00:00Z`);
     return ordinal>=startOrdinal&&ordinal<=todayOrdinal;
   });
 }
@@ -633,8 +798,93 @@ function renderPerformanceStats(items,currency){
   document.getElementById('performanceStatsCaption').textContent=currency?
     `${currency} · ${analysisPeriodLabel.textContent} · journal records only`:'No trades in this period';
 }
+function showStrategyTrades(group,periodLabel){
+  const dialog=document.getElementById('strategyTradesDialog');
+  document.getElementById('strategyTradesTitle').textContent=group.name;
+  document.getElementById('strategyTradesPeriod').textContent=`${periodLabel} · ${group.trades.length} ${group.trades.length===1?'trade':'trades'} · all currencies`;
+  const list=document.getElementById('strategyTradesList');
+  list.replaceChildren();
+  group.trades.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id)).forEach(trade=>{
+    const record=document.createElement('article');
+    record.className='strategy-trade-record';
+    const heading=document.createElement('div');
+    heading.className='strategy-trade-heading';
+    const name=document.createElement('strong');
+    name.textContent=`${trade.instrument||'Trade'}${trade.side?` · ${trade.side}`:''}`;
+    const pnl=document.createElement('strong');
+    const value=Number(trade.pnl||0);
+    pnl.className=value>0?'green':value<0?'red':'';
+    pnl.textContent=formatPnl(value,trade.currency||'USD');
+    heading.append(name,pnl);
+    const meta=document.createElement('p');
+    meta.textContent=[trade.date,trade.outcome,trade.account,trade.session].filter(Boolean).join(' · ');
+    record.append(heading,meta);
+    if(trade.notes){
+      const notes=document.createElement('p');
+      notes.className='strategy-trade-notes';
+      notes.textContent=trade.notes;
+      record.append(notes);
+    }
+    const open=document.createElement('button');
+    open.type='button';
+    open.className='textbutton';
+    open.textContent='VIEW DAY RECORDS →';
+    open.setAttribute('aria-label',`View all records for ${trade.date}`);
+    open.addEventListener('click',()=>{
+      const [year,month]=trade.date.split('-').map(Number);
+      current.setFullYear(year,month-1,1);
+      dialog.close();
+      renderCalendar();
+      showDay(trade.date,trades.filter(item=>item.date===trade.date));
+      selected.scrollIntoView({behavior:'smooth',block:'start'});
+    });
+    record.append(open);
+    list.append(record);
+  });
+  dialog.showModal();
+}
+function renderStrategyAnalysis(items,periodLabel){
+  const groups=new Map();
+  items.forEach(trade=>{
+    const name=(trade.strategy||'').trim();
+    const key=name?name.toLocaleLowerCase():null;
+    if(!groups.has(key))groups.set(key,{name:name||'No strategy',wins:0,losses:0,breakeven:0,trades:[]});
+    const group=groups.get(key);
+    group.trades.push(trade);
+    if(trade.outcome==='WIN')group.wins++;
+    else if(trade.outcome==='LOSS')group.losses++;
+    else if(trade.outcome==='BREAKEVEN')group.breakeven++;
+  });
+  const container=document.getElementById('strategyAnalysis');
+  document.getElementById('strategyAnalysisCaption').textContent=periodLabel;
+  container.replaceChildren();
+  if(!groups.size){
+    const empty=document.createElement('p');
+    empty.className='analysis-empty';
+    empty.textContent='No trades in this period.';
+    container.append(empty);
+    return;
+  }
+  [...groups.values()].sort((a,b)=>a.name.localeCompare(b.name)).forEach(group=>{
+    const row=document.createElement('button');
+    row.type='button';
+    row.className='strategy-analysis-row';
+    const name=document.createElement('strong');
+    name.textContent=group.name;
+    const detail=document.createElement('span');
+    detail.textContent=`${group.wins} wins · ${group.losses} losses · ${group.breakeven} break-even`;
+    const rate=document.createElement('strong');
+    const decisive=group.wins+group.losses;
+    rate.textContent=decisive?`${Math.round(group.wins/decisive*100)}%`:'—';
+    rate.setAttribute('aria-label',decisive?`${rate.textContent} win rate`:'Win rate unavailable');
+    row.append(name,detail,rate);
+    row.addEventListener('click',()=>showStrategyTrades(group,periodLabel));
+    container.append(row);
+  });
+}
 function renderAnalysis(){
-  const items=getAnalysisTrades();
+  const items=getAnalysisRecords(trades);
+  analysisNoSetupCount.textContent=String(getAnalysisRecords(noSetupEntries).length);
   const currencies=[...currencyTotals(items).keys()].sort();
   if(!currencies.includes(selectedAnalysisCurrency))selectedAnalysisCurrency=currencies[0]||'';
   analysisCurrency.replaceChildren();
@@ -649,7 +899,7 @@ function renderAnalysis(){
   const wins=items.filter(trade=>trade.outcome==='WIN').length;
   const losses=items.filter(trade=>trade.outcome==='LOSS').length;
   const breakeven=items.filter(trade=>trade.outcome==='BREAKEVEN').length;
-  const followed=items.filter(trade=>trade.followedPlan===true).length;
+  const adherence=planAdherence(items);
   const chronological=items.slice().sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
   let currentType='',currentLength=0,bestWin=0,worstLoss=0;
   chronological.forEach(trade=>{
@@ -668,7 +918,7 @@ function renderAnalysis(){
   analysisTradeCount.textContent=String(items.length);
   const decisiveTrades=wins+losses;
   analysisWinRate.textContent=decisiveTrades?`${Math.round(wins/decisiveTrades*100)}%`:'—';
-  analysisPlanRate.textContent=items.length?`${Math.round(followed/items.length*100)}%`:'—';
+  analysisPlanRate.textContent=adherence.known?`${Math.round(adherence.followed/adherence.known*100)}%`:'—';
   analysisNetPnl.replaceChildren();
   const totals=currencyTotals(items);
   if(!totals.size){
@@ -689,6 +939,7 @@ function renderAnalysis(){
   const rangeLabel=analysisRange==='month'?title.textContent:
     analysisRange==='7d'?'Last 7 days':analysisRange==='30d'?'Last 30 days':'All recorded trades';
   analysisPeriodLabel.textContent=rangeLabel;
+  renderStrategyAnalysis(items,rangeLabel);
   analysisRangeButtons.forEach(button=>{
     const active=button.dataset.analysisRange===analysisRange;
     button.classList.toggle('is-selected',active);
@@ -741,6 +992,14 @@ function renderAnalysis(){
     `${selectedAnalysisCurrency} daily net result · ${daily.length} active trading days`:
     'Daily net result in selected currency.';
 }
+function planAdherence(items){
+  const known=items.filter(trade=>typeof trade.followedPlan==='boolean');
+  return{
+    followed:known.filter(trade=>trade.followedPlan).length,
+    known:known.length,
+    unknown:items.length-known.length
+  };
+}
 function showDay(date,items){
   selectedCalendarDate=date;
   grid.querySelectorAll('.day').forEach(button=>{
@@ -764,14 +1023,15 @@ function showDay(date,items){
   );
   header.append(titleWrap);
   selected.append(header);
-  if(!items.length){
+  const noSetups=noSetupEntries.filter(entry=>entry.date===date);
+  if(!items.length&&!noSetups.length){
     selected.append(make('p','day-records-empty','No trades on this date.'));
     return;
   }
   const wins=items.filter(trade=>trade.outcome==='WIN').length;
   const losses=items.filter(trade=>trade.outcome==='LOSS').length;
   const breakeven=items.length-wins-losses;
-  const followed=items.filter(trade=>trade.followedPlan!==false).length;
+  const adherence=planAdherence(items);
   const totals=currencyTotals(items);
   const net=[...totals.values()].reduce((sum,value)=>sum+value,0);
   const stats=make('div','day-records-stats');
@@ -781,15 +1041,96 @@ function showDay(date,items){
     box.append(make('span','',label),strong);
     stats.append(box);
   };
-  stat('Trades',String(items.length));
-  stat('W / L / BE',`${wins} / ${losses} / ${breakeven}`);
-  stat('Plan followed',`${followed} of ${items.length}`,followed===items.length?'green':'amber');
-  const pnlStat=make('div','day-records-stat day-records-pnl');
-  pnlStat.append(make('span','','Day P&L'),make('strong',totals.size===1?(net>0?'green':net<0?'red':''):'',formatTotals(totals)));
-  stats.append(pnlStat);
+  if(items.length){
+    stat('Trades',String(items.length));
+    const outcomes=make('div','day-records-stat');
+    const outcomeCounts=make('strong','');
+    outcomeCounts.append(make('i','green',String(wins)), ' / ', make('i','red',String(losses)), ` / ${breakeven}`);
+    outcomes.append(make('span','','W / L / BE'),outcomeCounts);
+    stats.append(outcomes);
+    stat('Plan followed',adherence.known?`${adherence.followed} of ${adherence.known}${adherence.unknown?` · ${adherence.unknown} unknown`:''}`:'Not recorded',adherence.known&&adherence.followed===adherence.known?'green':'amber');
+    const pnlStat=make('div','day-records-stat day-records-pnl');
+    pnlStat.append(make('span','','Day P&L'),make('strong',totals.size===1?(net>0?'green':net<0?'red':''):'',formatTotals(totals)));
+    stats.append(pnlStat);
+  }else{
+    stat('Trades','0');
+    stat('P&L','0 · no trade');
+  }
   header.append(stats);
   const list=make('div','day-records-grid');
+  noSetups.forEach(entry=>{
+    const record=make('article','calendar-record record-card record-even');
+    record.append(make('strong','','NO SETUP PRESENTED'));
+    record.append(make('p','calendar-record-notes','No trade recorded for this entry.'));
+    if(entry.notes)record.append(make('p','calendar-record-notes no-setup-notes',entry.notes));
+    const actions=make('div','no-setup-calendar-actions');
+    const edit=make('details','no-setup-calendar-edit');
+    edit.append(make('summary','','EDIT ENTRY'));
+    const form=document.createElement('form');
+    form.method='post';
+    form.action=`/no-setup/${encodeURIComponent(entry.id)}/edit`;
+    form.className='journal-form';
+    const csrf=document.createElement('input');
+    csrf.type='hidden';
+    csrf.name='_csrf';
+    csrf.value=grid.dataset.csrf;
+    const returnTo=document.createElement('input');
+    returnTo.type='hidden';
+    returnTo.name='returnTo';
+    returnTo.value='calendar';
+    const returnDate=document.createElement('input');
+    returnDate.type='hidden';
+    returnDate.name='returnDate';
+    returnDate.value=entry.date;
+    const dateLabel=make('label','','DATE');
+    const dateInput=document.createElement('input');
+    dateInput.type='date';
+    dateInput.name='date';
+    dateInput.value=entry.date;
+    dateInput.required=true;
+    dateLabel.append(dateInput);
+    const notesLabel=make('label','','NOTES (OPTIONAL)');
+    const notesInput=document.createElement('textarea');
+    notesInput.name='notes';
+    notesInput.maxLength=3000;
+    notesInput.rows=3;
+    notesInput.value=entry.notes||'';
+    notesLabel.append(notesInput);
+    const save=make('button','outline','SAVE CHANGES');
+    save.type='submit';
+    dateInput.addEventListener('change',()=>{returnDate.value=dateInput.value});
+    form.append(csrf,returnTo,returnDate,dateLabel,notesLabel,save);
+    edit.append(form);
+    const deleteForm=document.createElement('form');
+    deleteForm.method='post';
+    deleteForm.action=`/no-setup/${encodeURIComponent(entry.id)}/delete`;
+    deleteForm.addEventListener('submit',event=>{
+      if(!window.confirm('Delete this no-setup entry?'))event.preventDefault();
+    });
+    const deleteCsrf=document.createElement('input');
+    deleteCsrf.type='hidden';
+    deleteCsrf.name='_csrf';
+    deleteCsrf.value=grid.dataset.csrf;
+    const deleteReturnTo=document.createElement('input');
+    deleteReturnTo.type='hidden';
+    deleteReturnTo.name='returnTo';
+    deleteReturnTo.value='calendar';
+    const deleteReturnDate=document.createElement('input');
+    deleteReturnDate.type='hidden';
+    deleteReturnDate.name='returnDate';
+    deleteReturnDate.value=selectedCalendarDate||entry.date;
+    const remove=make('button','textbutton danger-text','DELETE');
+    remove.type='submit';
+    deleteForm.append(deleteCsrf,deleteReturnTo,deleteReturnDate,remove);
+    actions.append(edit,deleteForm);
+    record.append(actions);
+    list.append(record);
+  });
   const timeFormat=new Intl.DateTimeFormat('en-GB',{timeZone:calendarTimezone,hour:'2-digit',minute:'2-digit'});
+  const money=(value,currency)=>new Intl.NumberFormat('en-US',{
+    style:'currency',currency:currency||'USD',currencyDisplay:'narrowSymbol',
+    signDisplay:'exceptZero',minimumFractionDigits:2,maximumFractionDigits:2
+  }).format(value);
   items.forEach(trade=>{
     const outcome=trade.outcome||'BREAKEVEN';
     const tone=outcome==='WIN'?'win':outcome==='LOSS'?'loss':'even';
@@ -804,45 +1145,69 @@ function showDay(date,items){
     const amount=Number(trade.pnl||0);
     const pnl=make('div','record-pnl');
     pnl.append(
-      make('strong',amount>0?'green':amount<0?'red':'',`${amount>0?'+':''}${amount.toFixed(2)}`),
+      make('strong',amount>0?'green':amount<0?'red':'',money(amount,trade.currency)),
       make('span','',trade.currency||'USD')
     );
     head.append(identity,pnl);
     record.append(head);
+    const meta=make('div','record-meta');
+    if(trade.tradeTime||trade.createdAt)meta.append(make('span','',trade.tradeTime||timeFormat.format(new Date(trade.createdAt))));
+    if(trade.session)meta.append(make('span','',trade.session));
+    const accountCount=Math.max(1,Number(trade.accountCount)||1);
+    const account=make('span','record-account');
+    if(trade.account)account.append(make('b','',trade.account),' · ');
+    account.append(`${accountCount}× ${accountCount===1?'account':'accounts'} `,
+      make('span','record-account-each',`(≈ ${money(amount/accountCount,trade.currency)} each)`));
+    meta.append(account);
+    const strategy=make('span','record-strategy');
+    strategy.append('Strategy: ',make('b','',trade.strategy||'No strategy'));
+    meta.append(strategy);
+    record.append(meta);
     const chips=make('div','record-chips');
-    if(trade.createdAt)chips.append(make('span','record-chip',timeFormat.format(new Date(trade.createdAt))));
-    if(trade.account)chips.append(make('span','record-chip',trade.account));
-    if(trade.session)chips.append(make('span','record-chip',trade.session));
     const emotion=trade.emotion||'calm';
     chips.append(make('span',`record-chip ${emotion==='calm'?'':'record-chip-warn'}`,emotion.toUpperCase()));
-    chips.append(make('span',`record-chip ${trade.followedPlan===false?'record-chip-bad':'record-chip-good'}`,trade.followedPlan===false?'PLAN BROKEN':'PLAN FOLLOWED'));
+    const planStatus=trade.followedPlan===true?'PLAN FOLLOWED':trade.followedPlan===false?'PLAN BROKEN':'PLAN STATUS UNKNOWN';
+    const planClass=trade.followedPlan===true?'record-chip-good':trade.followedPlan===false?'record-chip-bad':'';
+    chips.append(make('span',`record-chip ${planClass}`,planStatus));
     if(trade.checklistCompleted===true)chips.append(make('span','record-chip','CHECKLIST COMPLETED'));
     else if(trade.checklistCompleted===false)chips.append(make('span','record-chip record-chip-bad','CHECKLIST MISSED'));
     record.append(chips);
-    if(trade.planDeviationReason){
-      const reason=make('p','calendar-record-notes');
-      reason.append(make('span','record-label','PLAN DEVIATION'),document.createTextNode(trade.planDeviationReason));
-      record.append(reason);
-    }
-    if(trade.strategy){
-      const strategy=make('p','calendar-record-strategy');
-      strategy.append(make('span','record-label','STRATEGY'),document.createTextNode(trade.strategy));
-      record.append(strategy);
-    }
-    if(trade.notes)record.append(make('p','calendar-record-notes',trade.notes));
-    if(trade.hasImage){
+    const recordImages=make('div','record-images');
+    (trade.images||[]).forEach((imageId,index)=>{
       const imageButton=make('button','image-preview-trigger record-image');
       imageButton.type='button';
-      imageButton.dataset.imageSrc=`/trades/${encodeURIComponent(trade.id)}/image`;
-      imageButton.setAttribute('aria-label',`Preview image for ${trade.instrument||'trade'}`);
+      imageButton.dataset.imageSrc=`/trades/${encodeURIComponent(trade.id)}/images/${encodeURIComponent(imageId)}`;
+      imageButton.setAttribute('aria-label',`Preview image ${index+1} for ${trade.instrument||'trade'}`);
       const image=document.createElement('img');
       image.src=imageButton.dataset.imageSrc;
-      image.alt='Trade attachment thumbnail';
+      image.alt=`Trade attachment ${index+1}`;
       image.loading='lazy';
-      imageButton.append(image);
+      imageButton.append(image,make('span','record-image-enlarge','⤢ ENLARGE'));
       bindImagePreview(imageButton);
-      record.append(imageButton);
-    }
+      recordImages.append(imageButton);
+    });
+    if(recordImages.childElementCount)record.append(recordImages);
+    const appendNote=(label,text,warning)=>{
+      if(!text)return;
+      const note=make('div',`record-note${warning?' record-note-warning':''}`);
+      const content=make('p','record-note-text',text);
+      note.append(make('span','record-label',label),content);
+      if(text.length>180||text.split('\n').length>3){
+        const more=make('button','record-note-more','SHOW MORE');
+        more.type='button';
+        more.setAttribute('aria-expanded','false');
+        more.addEventListener('click',()=>{
+          const expanded=more.getAttribute('aria-expanded')!=='true';
+          more.setAttribute('aria-expanded',String(expanded));
+          content.classList.toggle('is-expanded',expanded);
+          more.textContent=expanded?'SHOW LESS':'SHOW MORE';
+        });
+        note.append(more);
+      }else content.classList.toggle('is-expanded',true);
+      record.append(note);
+    };
+    appendNote('WHY THE PLAN BROKE',trade.planDeviationReason,true);
+    appendNote('NOTES',trade.notes,false);
     const actions=make('div','journal-actions record-actions');
     const edit=make('button','textbutton trade-edit-trigger','EDIT');
     edit.type='button';
@@ -859,10 +1224,18 @@ function showDay(date,items){
     csrf.type='hidden';
     csrf.name='_csrf';
     csrf.value=grid.dataset.csrf;
+    const returnTo=document.createElement('input');
+    returnTo.type='hidden';
+    returnTo.name='returnTo';
+    returnTo.value='calendar';
+    const returnDate=document.createElement('input');
+    returnDate.type='hidden';
+    returnDate.name='returnDate';
+    returnDate.value=selectedCalendarDate||trade.date;
     const remove=make('button','textbutton danger-text','DELETE');
     remove.type='submit';
     remove.setAttribute('aria-label',`Delete ${trade.instrument||'trade'} record`);
-    deleteForm.append(csrf,remove);
+    deleteForm.append(csrf,returnTo,returnDate,remove);
     actions.append(deleteForm);
     record.append(actions);
     list.append(record);
@@ -889,6 +1262,8 @@ function renderCalendar(){
     return{records,value:calendarNet(records),label:new Date(year,index,1).toLocaleString('en-US',{month:'short'})};
   });
   const monthTrades=months[month].records;
+  const monthPrefix=`${year}-${String(month+1).padStart(2,'0')}-`;
+  const monthNoSetup=noSetupEntries.filter(entry=>entry.date.startsWith(monthPrefix));
   const monthValue=calendarNet(monthTrades);
   const daily=new Map();
   monthTrades.forEach(trade=>{
@@ -897,7 +1272,7 @@ function renderCalendar(){
     daily.set(trade.date,records);
   });
   title.textContent=current.toLocaleString('en-US',{month:'long',year:'numeric'});
-  const years=[...new Set([calendarYear-1,calendarYear,year,...trades.map(trade=>Number(trade.date.slice(0,4)))])].sort((a,b)=>a-b);
+  const years=[...new Set([calendarYear-1,calendarYear,year,...trades.map(trade=>Number(trade.date.slice(0,4))),...noSetupEntries.map(entry=>Number(entry.date.slice(0,4)))])].sort((a,b)=>a-b);
   const yearButtons=document.getElementById('calendarYears');
   yearButtons.replaceChildren();
   years.forEach(value=>{
@@ -957,33 +1332,63 @@ function renderCalendar(){
   });
   monthPnl.textContent=calendarMoney(monthValue);
   monthPnl.className=`month-pnl ${calendarTone(monthValue)}`;
-  document.getElementById('calendarMonthCaption').textContent=`${selectedCalendarCurrency} net result · ${monthTrades.length} trades`;
+  document.getElementById('calendarMonthCurrency').textContent=selectedCalendarCurrency;
+  const wins=monthTrades.filter(trade=>trade.outcome==='WIN').length;
+  const losses=monthTrades.filter(trade=>trade.outcome==='LOSS').length;
   const stats=document.getElementById('calendarMonthStats');
   stats.replaceChildren();
   const dailyResults=[...daily].map(([date,records])=>({date,value:calendarNet(records)}));
   const best=dailyResults.reduce((result,day)=>!result||day.value>result.value?day:result,null);
   const worst=dailyResults.reduce((result,day)=>!result||day.value<result.value?day:result,null);
-  const profitableDays=dailyResults.filter(day=>day.value>0).length;
+  const chronological=monthTrades.slice().sort((a,b)=>
+    String(a.createdAt||a.date).localeCompare(String(b.createdAt||b.date))||String(a.id||'').localeCompare(String(b.id||''))
+  );
+  let streakType='',streakLength=0,bestWinStreak=0,worstLossStreak=0;
+  chronological.forEach(trade=>{
+    const outcome=trade.outcome==='WIN'||trade.outcome==='LOSS'?trade.outcome:'';
+    if(outcome&&outcome===streakType)streakLength++;
+    else{
+      streakType=outcome;
+      streakLength=outcome?1:0;
+    }
+    if(outcome==='WIN')bestWinStreak=Math.max(bestWinStreak,streakLength);
+    if(outcome==='LOSS')worstLossStreak=Math.max(worstLossStreak,streakLength);
+  });
+  const currentWinStreak=streakType==='WIN'?streakLength:0;
+  const currentLossStreak=streakType==='LOSS'?streakLength:0;
+  const formatDay=date=>{
+    const parts=new Intl.DateTimeFormat('en-US',{weekday:'short',day:'numeric',month:'short'}).formatToParts(new Date(`${date}T12:00:00`));
+    const value=type=>parts.find(part=>part.type===type)?.value||'';
+    return`${value('weekday')} ${value('day')} ${value('month')}`;
+  };
   const statValues=[
     ['TRADES',String(monthTrades.length)],
     ['WIN RATE',calendarWinRate(monthTrades)],
-    ['PROFITABLE DAYS',`${profitableDays} of ${daily.size}`],
-    ['BEST DAY',best?`${calendarMoney(best.value)} · ${best.date.slice(5)}`:'—',best?.value],
-    ['WORST DAY',worst?`${calendarMoney(worst.value)} · ${worst.date.slice(5)}`:'—',worst?.value]
+    ['BEST DAY',best?calendarMoney(best.value):'—',best?.value,best?formatDay(best.date):'No recorded days'],
+    ['WORST DAY',worst?calendarMoney(worst.value):'—',worst?.value,worst?formatDay(worst.date):'No recorded days'],
+    ['WINS',String(wins),'positive'],
+    ['LOSSES',String(losses),'negative'],
+    ['BEST WIN STREAK',`${bestWinStreak} ${bestWinStreak===1?'trade':'trades'}`,'positive',`Current · ${currentWinStreak} ${currentWinStreak===1?'trade':'trades'}`],
+    ['WORST LOSS STREAK',`${worstLossStreak} ${worstLossStreak===1?'trade':'trades'}`,'negative',`Current · ${currentLossStreak} ${currentLossStreak===1?'trade':'trades'}`]
   ];
-  statValues.forEach(([label,value,tone])=>{
+  statValues.forEach(([label,value,tone,detail])=>{
     const cell=document.createElement('div');
     const name=document.createElement('span');
     name.textContent=label;
     const result=document.createElement('strong');
     result.textContent=value;
-    if(tone!==undefined)result.className=calendarTone(tone);
+    if(tone!==undefined)result.className=typeof tone==='string'?tone:calendarTone(tone);
     cell.append(name,result);
+    if(detail){
+      const note=document.createElement('small');
+      note.textContent=detail;
+      cell.append(note);
+    }
     stats.append(cell);
   });
   grid.replaceChildren();
-  // Weekend columns appear only when the month has weekend trades, so no records are hidden.
-  const showWeekends=monthTrades.some(trade=>[0,6].includes(new Date(`${trade.date}T12:00:00Z`).getUTCDay()));
+  const noSetupDates=new Set(monthNoSetup.map(entry=>entry.date));
+  const showWeekends=[...monthTrades,...monthNoSetup].some(entry=>[0,6].includes(new Date(`${entry.date}T12:00:00Z`).getUTCDay()));
   grid.classList.toggle('show-weekends',showWeekends);
   (showWeekends?['Mon','Tue','Wed','Thu','Fri','Sat','Sun','Week']:['Mon','Tue','Wed','Thu','Fri','Week']).forEach(day=>{
     const weekday=document.createElement('div');
@@ -1013,20 +1418,21 @@ function renderCalendar(){
     }else{
       const date=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
       const dayTrades=daily.get(date)||[];
+      const noSetup=noSetupDates.has(date);
       const value=calendarNet(dayTrades);
       weekTrades.push(...dayTrades);
       const button=document.createElement('button');
       button.type='button';
       button.dataset.date=date;
-      button.className=`day${dayTrades.length?` ${calendarTone(value)}`:''}${date===calendarToday?' is-today':''}${date===selectedCalendarDate?' is-selected':''}`;
+      button.className=`day${dayTrades.length?` ${calendarTone(value)}`:noSetup?' neutral':''}${date===calendarToday?' is-today':''}${date===selectedCalendarDate?' is-selected':''}`;
       button.setAttribute('aria-pressed',String(date===selectedCalendarDate));
-      button.setAttribute('aria-label',`${date}: ${dayTrades.length} ${selectedCalendarCurrency} trades${dayTrades.length?`, ${calendarMoney(value)}`:''}. Open all trade records for this date.`);
+      button.setAttribute('aria-label',`${date}: ${dayTrades.length} ${selectedCalendarCurrency} trades${dayTrades.length?`, ${calendarMoney(value)}`:noSetup?', zero selected-currency P&L':''}${noSetup?', no setup presented':''}. Open records for this date.`);
       const number=document.createElement('span');
       number.className='calendar-day-number';
       number.textContent=day;
       const pnl=document.createElement('strong');
-      pnl.className=`calendar-day-pnl${dayTrades.length?'':' is-empty'}`;
-      pnl.textContent=dayTrades.length?calendarMoney(value):'—';
+      pnl.className=`calendar-day-pnl${dayTrades.length||noSetup?'':' is-empty'}`;
+      pnl.textContent=dayTrades.length?calendarMoney(value):noSetup?'0 · NO SETUP':'—';
       button.append(number,pnl);
       if(dayTrades.length){
         const footer=document.createElement('span');
@@ -1038,6 +1444,12 @@ function renderCalendar(){
         outcomes.textContent=`${dayTrades.filter(trade=>trade.outcome==='WIN').length}W / ${dayTrades.filter(trade=>trade.outcome==='LOSS').length}L`;
         footer.append(meta,outcomes);
         button.append(footer);
+      }
+      if(noSetup){
+        const label=document.createElement('small');
+        label.className='calendar-no-setup';
+        label.textContent='NO SETUP';
+        button.append(label);
       }
       button.addEventListener('click',()=>showDay(date,trades.filter(trade=>trade.date===date)));
       grid.append(button);
@@ -1079,4 +1491,5 @@ document.getElementById('nextMonth').addEventListener('click',()=>{
   renderCalendar();
 });
 renderCalendar();
+if(validRequestedCalendarDate)showDay(requestedCalendarDate,trades.filter(trade=>trade.date===requestedCalendarDate));
 })();
