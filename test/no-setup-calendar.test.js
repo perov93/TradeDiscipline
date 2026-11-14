@@ -8,20 +8,30 @@ function element(){
   const classes=new Set();
   return {
     children:[],attributes:{},dataset:{},style:{},textContent:'',className:'',
-    classList:{toggle(name,on){if(on)classes.add(name);else classes.delete(name)},contains:name=>classes.has(name)},
+    classList:{add:name=>classes.add(name),toggle(name,on){if(on)classes.add(name);else classes.delete(name)},contains:name=>classes.has(name)},
     append(...children){this.children.push(...children)},
     get childElementCount(){return this.children.filter(child=>typeof child==='object').length},
     replaceChildren(){this.children=[]},
     setAttribute(name,value){this.attributes[name]=value},
     getAttribute(name){return this.attributes[name]},
     addEventListener(name,handler){this[name]=handler},
+    focus(){this.focused=true},
+    scrollIntoView(){this.scrolled=true},
     querySelectorAll(){return this.children.filter(child=>child.className&&child.className.startsWith('day'))}
   };
 }
+function calendarNodes(){
+  return Object.fromEntries([
+    'calendarYears','calendarYearCaption','monthlyPerformance','calendarMonthRows','calendarMonthCurrency','calendarMonthStats',
+    'calendarTableYear','calendarMonthTableCaption','calendarYearTrades','calendarYearWinRate','calendarYearPnl',
+    'calendarMonthTrades','calendarMonthTradeRows','calendarMonthTradesTitle'
+  ].map(id=>[id,element()]));
+}
 test('calendar displays neutral no-setup dates independently of trade totals and currency',()=>{
-  const nodes=Object.fromEntries(['calendarYears','calendarYearCaption','monthlyPerformance','calendarMonthRows','calendarMonthCurrency','calendarMonthStats'].map(id=>[id,element()]));
+  const nodes=calendarNodes();
   const grid=element(),selected=element(),title=element(),monthPnl=element();
   grid.dataset.csrf='csrf-token';
+  let analysisRenderCount=0;
   const trades=[{id:'1',date:'2026-11-09',createdAt:'2026-11-09T12:00:00Z',currency:'EUR',outcome:'WIN',pnl:50}];
   const noSetupEntries=[
     {id:'entry1',date:'2026-11-08',notes:'No valid entry'},
@@ -34,8 +44,8 @@ test('calendar displays neutral no-setup dates independently of trade totals and
     Intl,Date,grid,selected,title,monthPnl,trades,noSetupEntries,
     formatPnl:(value,currency)=>`${currency} ${Number(value)>0?'+':''}${Number(value).toFixed(2)}`,
     current:new Date(2026,10,1),calendarYear:2026,calendarToday:'2026-11-12',calendarTimezone:'Europe/Sofia',
-    selectedCalendarCurrency:'USD',selectedCalendarDate:'',
-    renderAnalysis(){},currencyTotals:()=>new Map(),formatTotals:()=>'',window:{confirm:()=>false}
+    selectedCalendarCurrency:'USD',selectedCalendarDate:'',analysisRange:'day',monthTradesExpanded:false,
+    renderAnalysis(){analysisRenderCount++},currencyTotals:()=>new Map(),formatTotals:()=>'',window:{confirm:()=>false}
   });
   const source=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
   const block=source.slice(source.indexOf('function planAdherence('),source.indexOf("calendarCurrency.addEventListener('change'"));
@@ -47,10 +57,15 @@ test('calendar displays neutral no-setup dates independently of trade totals and
   assert.equal(day.children[1].textContent,'0 · NO SETUP');
   assert.ok(day.className.includes('neutral'));
   assert.match(day.attributes['aria-label'],/no setup presented/);
+  const analysisRendersBeforeSelection=analysisRenderCount;
   day.click();
+  assert.equal(analysisRenderCount,analysisRendersBeforeSelection+1);
+  assert.equal(context.selectedCalendarDate,'2026-11-08');
   const records=selected.children.find(child=>child.className==='day-records-grid');
-  assert.equal(records.children[0].children[0].textContent,'NO SETUP PRESENTED');
-  assert.equal(records.children[0].children[2].textContent,'No valid entry');
+  assert.equal(records.children[0].getAttribute('aria-label'),'No-setup entry 1');
+  assert.equal(records.children[0].children[0].children[0].textContent,'NO-SETUP ENTRY 01');
+  assert.equal(records.children[0].children[1].textContent,'NO SETUP PRESENTED');
+  assert.equal(records.children[0].children[3].textContent,'No valid entry');
   const actions=records.children[0].children.at(-1);
   const edit=actions.children[0].children[1];
   assert.equal(edit.action,'/no-setup/entry1/edit');
@@ -94,6 +109,10 @@ test('calendar displays neutral no-setup dates independently of trade totals and
   tradeDay.click();
   const tradeRecords=selected.children.find(child=>child.className==='day-records-grid');
   const tradeRecord=tradeRecords.children.find(child=>child.className.includes('record-card')&&!child.className.includes('record-even'));
+  assert.deepEqual(tradeRecords.children.filter(child=>child.className.includes('record-no-setup'))
+    .map(child=>child.children[0].children[0].textContent),['NO-SETUP ENTRY 01','NO-SETUP ENTRY 02']);
+  assert.equal(tradeRecord.children[0].children[0].textContent,'TRADE 01');
+  assert.equal(tradeRecord.children[0].children[1].textContent,'14:00 · Europe/Sofia');
   assert.ok(tradeRecord.children.find(child=>child.className==='record-chips').children.some(chip=>chip.textContent==='PLAN STATUS UNKNOWN'));
   const accountMeta=tradeRecord.children.find(child=>child.className==='record-meta').children.find(child=>child.className==='record-account');
   assert.equal(accountMeta.children[0],'1× account ');
@@ -132,6 +151,66 @@ test('calendar displays neutral no-setup dates independently of trade totals and
   assert.equal(nodes.calendarMonthStats.children.find(child=>child.children[0].textContent==='WORST LOSS STREAK').children[2].textContent,'Current · 0 trades');
 });
 
+test('monthly table opens filtered trades, follows year and currency changes, and handles empty months',()=>{
+  const nodes=calendarNodes(),grid=element(),selected=element(),title=element(),monthPnl=element();
+  const trade=(id,date,pnl,outcome,currency='USD',extra={})=>({
+    id,date,createdAt:`${date}T10:00:00Z`,instrument:'TEST',currency,pnl,outcome,...extra
+  });
+  const trades=[
+    trade('1','2026-01-02',100,'WIN','USD',{tradeTime:'09:00'}),
+    trade('2','2026-01-02',-40,'LOSS','USD',{tradeTime:'11:00',strategy:'<script>not markup</script>'}),
+    trade('3','2026-01-03',0,'BREAKEVEN'),
+    trade('4','2026-01-02',999,'WIN','EUR'),
+    trade('5','2025-01-05',400,'WIN')
+  ];
+  const context=vm.createContext({
+    document:{getElementById:id=>nodes[id],createElement:()=>element()},
+    Intl,Date,grid,selected,title,monthPnl,trades,noSetupEntries:[],
+    current:new Date(2026,0,1),calendarYear:2026,calendarToday:'2026-11-14',calendarTimezone:'Europe/Sofia',
+    selectedCalendarCurrency:'USD',selectedCalendarDate:'',analysisRange:'month',monthTradesExpanded:false,
+    renderAnalysis(){},currencyTotals:()=>new Map(),formatTotals:()=>'',formatPnl:()=>'',window:{confirm:()=>false}
+  });
+  const source=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
+  vm.runInContext(source.slice(source.indexOf('function planAdherence('),source.indexOf("calendarCurrency.addEventListener('change'")),context);
+  context.renderCalendar();
+  assert.equal(nodes.calendarMonthRows.children.length,12);
+  assert.equal(nodes.calendarMonthRows.children[0].children[0].children[0].textContent,'January 2026');
+  assert.equal(nodes.calendarTableYear.value,'2026');
+  assert.equal(nodes.calendarYearTrades.textContent,'3');
+  assert.equal(nodes.calendarYearWinRate.textContent,'50%');
+  assert.equal(nodes.calendarYearPnl.textContent,'+$60.00');
+  assert.equal(nodes.calendarMonthTrades.hidden,true);
+  nodes.calendarMonthRows.children[0].click();
+  assert.equal(nodes.calendarMonthTrades.hidden,false);
+  assert.equal(nodes.calendarMonthTradesTitle.textContent,'January 2026 · USD · 3 trades');
+  assert.equal(nodes.calendarMonthRows.children[0].children[0].children[0].attributes['aria-expanded'],'true');
+  assert.equal(nodes.calendarMonthRows.children[0].children[0].children[0].focused,true);
+  const rows=nodes.calendarMonthTradeRows.children;
+  assert.equal(rows.length,3);
+  assert.equal(rows[0].children[0].children[0].textContent,'2026-01-03 · 12:00');
+  assert.equal(rows[1].children[0].children[0].textContent,'2026-01-02 · 11:00');
+  assert.equal(rows[1].children[3].textContent,'<script>not markup</script>');
+  assert.equal(rows[1].children[5].textContent,'-$40.00');
+  rows[1].children[0].children[0].click();
+  assert.equal(context.selectedCalendarDate,'2026-01-02');
+  assert.equal(selected.scrolled,true);
+  assert.equal(selected.children.find(child=>child.className==='day-records-grid').children.length,3);
+  context.selectedCalendarCurrency='EUR';
+  context.renderCalendar();
+  assert.equal(nodes.calendarMonthTradeRows.children.length,1);
+  assert.equal(nodes.calendarYearPnl.textContent,'+€999.00');
+  context.selectedCalendarCurrency='USD';
+  nodes.calendarTableYear.value='2025';
+  nodes.calendarTableYear.onchange();
+  assert.equal(nodes.calendarTableYear.value,'2025');
+  assert.equal(nodes.calendarMonthTradesTitle.textContent,'January 2025 · USD · 1 trade');
+  assert.equal(nodes.calendarYearTrades.textContent,'1');
+  assert.equal(nodes.calendarYearPnl.textContent,'+$400.00');
+  nodes.calendarMonthRows.children[1].click();
+  assert.equal(nodes.calendarMonthTradesTitle.textContent,'February 2025 · USD · 0 trades');
+  assert.equal(nodes.calendarMonthTradeRows.children[0].children[0].textContent,'No trades recorded for this month and currency.');
+});
+
 test('trade previews show account estimates, expandable notes, image previews and working record actions',()=>{
   const source=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
   const selected=element(),grid=element();
@@ -142,7 +221,17 @@ test('trade previews show account estimates, expandable notes, image previews an
     Intl,Date,selected,grid,noSetupEntries:[],calendarTimezone:'Europe/Sofia',
     currencyTotals:items=>new Map([['USD',items.reduce((sum,trade)=>sum+trade.pnl,0)]]),
     formatTotals:()=> 'USD -1054.00',
+    analysisRange:'month',renderAnalysis(){},
     bindImagePreview:button=>imageBindings.push(button),
+    createTradingViewPreviewButton:(id,label)=>{
+      const button=element();
+      button.className='image-preview-trigger';
+      button.dataset.imageSrc=`https://s3.tradingview.com/snapshots/${id[0].toLowerCase()}/${id}.png`;
+      button.setAttribute('aria-label',label);
+      button.append(element());
+      imageBindings.push(button);
+      return button;
+    },
     editTrade:id=>edits.push(id),
     window:{confirm:()=>false}
   });
@@ -152,10 +241,13 @@ test('trade previews show account estimates, expandable notes, image previews an
     id:'trade-1',date:'2026-11-13',tradeTime:'12:22',instrument:'MNQ1!',side:'BUY',
     currency:'USD',outcome:'LOSS',pnl:-1054,account:'APEX',accountCount:5,session:'London',
     emotion:'revenge',followedPlan:false,checklistCompleted:false,planDeviationReason:'Entered too early.',
-    strategy:'PHP',notes,images:['image-1','image-2']
+    strategy:'PHP',notes,images:['image-1','image-2'],tradingViewId:'ZWvJ4X1B'
   }]);
   const record=selected.children.find(child=>child.className==='day-records-grid').children[0];
-  assert.equal(record.children[0].children[1].children[0].textContent,'-$1,054.00');
+  assert.equal(record.getAttribute('aria-label'),'Trade 1: MNQ1!');
+  assert.equal(record.children[0].children[0].textContent,'TRADE 01');
+  assert.equal(record.children[0].children[1].textContent,'12:22 · Europe/Sofia');
+  assert.equal(record.children.find(child=>child.className==='calendar-record-head').children[1].children[0].textContent,'-$1,054.00');
   const meta=record.children.find(child=>child.className==='record-meta');
   const account=meta.children.find(child=>child.className==='record-account');
   assert.equal(account.children[0].textContent,'APEX');
@@ -166,10 +258,11 @@ test('trade previews show account estimates, expandable notes, image previews an
   assert.ok(flags.some(flag=>flag.textContent==='PLAN BROKEN'));
   assert.ok(flags.some(flag=>flag.textContent==='CHECKLIST MISSED'));
   const images=record.children.find(child=>child.className==='record-images');
-  assert.equal(images.children.length,2);
-  assert.equal(imageBindings.length,2);
+  assert.equal(images.children.length,3);
+  assert.equal(imageBindings.length,3);
   assert.equal(imageBindings[0].dataset.imageSrc,'/trades/trade-1/images/image-1');
   assert.equal(imageBindings[0].children[1].textContent,'⤢ ENLARGE');
+  assert.equal(imageBindings[2].dataset.imageSrc,'https://s3.tradingview.com/snapshots/z/ZWvJ4X1B.png');
   const note=record.children.find(child=>child.className==='record-note');
   assert.ok(record.children.indexOf(images)<record.children.indexOf(note));
   assert.equal(note.children[1].textContent,notes);
@@ -203,6 +296,11 @@ test('no-setup records follow the same analysis date ranges as trades',()=>{
   assert.equal(context.getAnalysisRecords(records).length,4);
   context.analysisRange='7d';
   assert.deepEqual(Array.from(context.getAnalysisRecords(records),entry=>entry.date),['2026-11-06','2026-11-12']);
+  context.analysisRange='day';
+  context.selectedCalendarDate='2026-11-06';
+  assert.deepEqual(Array.from(context.getAnalysisRecords(records),entry=>entry.date),['2026-11-06']);
+  context.selectedCalendarDate='';
+  assert.equal(context.getAnalysisRecords(records).length,0);
   context.analysisRange='30d';
   assert.equal(context.getAnalysisRecords(records).length,4);
   context.analysisRange='all';

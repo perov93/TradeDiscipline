@@ -13,8 +13,6 @@
     return sign+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' '+(c||'USD');
   };
   const pnlClass=n=>(Number(n)||0)>0?'pnl-pos':(Number(n)||0)<0?'pnl-neg':'';
-  const tradeAccountCount=t=>Number.isInteger(Number(t.accountCount))&&Number(t.accountCount)>0?Number(t.accountCount):1;
-  const approxAccountPnl=t=>fmtPnl((Number(t.pnl)||0)/tradeAccountCount(t),t.currency);
 
   /* ---- Today's numbers for the new cards ---- */
   const todayTotals={};
@@ -23,9 +21,53 @@
   const tradesLeft=Math.max(0,limits.maxTrades-todays.length);
   const lossesLeft=Math.max(0,limits.maxLosses-losses);
   const recentTrades=[...trades].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,5);
+  const recentTradeDays=new Map();
+  const recentTradeTotals=new Map();
+  const addTradeTotal=(totals,t)=>{
+    const currency=t.currency||'USD';
+    totals.set(currency,(totals.get(currency)||0)+(Number(t.pnl)||0));
+  };
+  recentTrades.forEach(t=>{
+    const date=dayKey(t.createdAt,user.timezone);
+    if(!recentTradeDays.has(date))recentTradeDays.set(date,{trades:[],totals:new Map()});
+    const day=recentTradeDays.get(date);
+    day.trades.push(t);
+    addTradeTotal(day.totals,t);
+    addTradeTotal(recentTradeTotals,t);
+  });
+  const recentDayFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',weekday:'short',day:'numeric',month:'short'});
+  const recapDateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'numeric',month:'short'});
   const activeRulesCount=rules.filter(r=>r.active).length;
   const checkedActive=active.filter(r=>checks.includes(String(r._id))).length;
   const noSetupRecords=typeof noSetupEntries==='undefined'?[]:noSetupEntries;
+  const sessionWhenFormat=new Intl.DateTimeFormat('en-GB',{weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23',timeZone:user.timezone});
+  let closedMarketRecap=null;
+  if(typeof marketClosed!=='undefined'&&marketClosed){
+    const dayMs=86400000;
+    const accountDay=new Date(`${today}T00:00:00Z`);
+    const weekday=accountDay.getUTCDay();
+    const mondayOffset=(weekday+6)%7;
+    const weekStart=new Date(accountDay.getTime()-(mondayOffset+(weekday>=1&&weekday<=5?7:0))*dayMs);
+    const weekEnd=new Date(weekStart.getTime()+6*dayMs);
+    const start=weekStart.toISOString().slice(0,10);
+    const end=weekEnd.toISOString().slice(0,10);
+    const items=trades.filter(t=>{
+      const date=dayKey(t.createdAt,user.timezone);
+      return date>=start&&date<=end&&date<=today;
+    });
+    const totals=new Map();
+    items.forEach(t=>addTradeTotal(totals,t));
+    const wins=items.filter(t=>t.outcome==='WIN').length;
+    const losses=items.filter(t=>t.outcome==='LOSS').length;
+    const knownPlan=items.filter(t=>typeof t.followedPlan==='boolean');
+    closedMarketRecap={
+      start,end,items,totals,wins,losses,
+      winRate:wins+losses?`${Math.round(wins/(wins+losses)*100)}%`:'—',
+      planRate:knownPlan.length?`${Math.round(knownPlan.filter(t=>t.followedPlan).length/knownPlan.length*100)}%`:'—',
+      knownPlan:knownPlan.length,
+      latest:recentTrades[0]
+    };
+  }
 %>
 <html lang="en">
   <head>
@@ -34,8 +76,9 @@
     <meta name="theme-color" content="#060608">
     <title>DISCIPLINE / My Rules. My Edge.</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
-    <link rel="stylesheet" href="/style.css?v=20261113-1">
-    <script src="/app.js?v=20261113-1" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20261114-15">
+    <script src="/app.js?v=20261114-11" defer></script>
+    <script src="/calendar-ui.js?v=2" defer></script>
   </head>
   <body>
     <main class="app" data-default-tab="<%= preferences.defaultTab %>">
@@ -73,7 +116,7 @@
           <div class="eyebrow">
             <span>TODAY'S STATUS</span>
             <span><%= today %></span>
-            <span class="trade-status <%= locked ? 'status-locked' : cooldown ? 'status-cooldown' : 'status-ready' %>"><%= locked ? 'LOCKED' : cooldown ? 'COOLDOWN' : 'READY' %></span>
+            <span class="trade-status <%= locked ? 'status-locked' : cooldown ? 'status-cooldown' : marketClosed ? 'status-closed' : 'status-ready' %>"><%= locked ? 'LOCKED' : cooldown ? 'COOLDOWN' : marketClosed ? 'CLOSED' : 'READY' %></span>
           </div>
           <h1>SESSION CHECK-IN</h1>
           <p>Check your limits, market sessions, and plan before you trade.</p>
@@ -114,21 +157,21 @@
 
         <h2 class="trade-group-heading">SESSION &amp; AVAILABILITY</h2>
         <div class="trading-overview-grid">
-          <section class="panel timer-panel account-lock-panel <%= locked ? 'locked-panel' : cooldown ? 'cooldown-panel' : '' %>">
+          <section class="panel timer-panel account-lock-panel session-card <%= locked ? 'locked-panel' : cooldown ? 'cooldown-panel' : marketClosed ? 'market-closed-panel' : '' %>">
             <div class="section-heading">
-              <span><%= locked ? 'DAILY ACCOUNT LOCK' : cooldown ? 'TRADE COOLDOWN' : 'ACCOUNT STATUS' %></span>
-              <span class="tag <%= locked ? 'tag-red' : cooldown ? 'tag-amber' : 'tag-green' %>"><%= locked ? 'LOCKED' : cooldown ? 'WAIT' : 'READY' %></span>
+              <span><%= locked ? 'DAILY ACCOUNT LOCK' : cooldown ? 'TRADE COOLDOWN' : marketClosed ? 'MARKET CLOSED' : 'ACCOUNT STATUS' %></span>
+              <span class="tag <%= locked ? 'tag-red' : cooldown || marketClosed ? 'tag-amber' : 'tag-green' %>"><%= locked ? 'LOCKED' : cooldown ? 'WAIT' : marketClosed ? 'CLOSED' : 'READY' %></span>
             </div>
             <% if (availableAtLabel) { %>
-              <p class="account-lock-reason">
-                <% if (locked) { %>
-                  <%= lockReason %>. Resets at midnight in your account timezone.
-                <% } else { %>
-                  Cooldown after a recorded loss.
-                <% } %>
-              </p>
-              <div class="card-label">UNLOCKS IN</div>
-              <div class="timer-face <%= cooldown && !locked ? 'amber' : '' %>" id="timer" data-until="<%= availableAt.toISOString() %>" aria-label="00 days, 00 hours, 00 minutes, 00 seconds">0d 00h 00m 00s</div>
+              <% if (cooldown && !locked) { %>
+                <p class="account-lock-reason">Cooldown after a recorded loss.</p>
+              <% } %>
+              <div class="card-label"><%= futuresOpeningCountdown ? 'NEXT FUTURES OPEN IN' : 'UNLOCKS IN' %></div>
+              <div class="timer-face session-countdown <%= !locked && (cooldown || marketClosed) ? 'amber' : '' %>" id="timer" data-countdown-style="units" data-until="<%= availableAt.toISOString() %>" data-countdown-label="<%= futuresOpeningCountdown ? 'the next futures opening' : 'trading is available' %>" aria-label="00 days, 00 hours, 00 minutes, 00 seconds"><span data-countdown-part>0</span><small>d</small><span data-countdown-part>00</span><small>h</small><span data-countdown-part>00</span><small>m</small><span data-countdown-part>00</span><small>s</small></div>
+              <% if (marketClosed && !locked && !cooldown) { %>
+                <p class="session-when"><b><%= sessionWhenFormat.format(availableAt) %></b> your time · <%= new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(availableAt) %> ET</p>
+              <% } %>
+              <% if (!marketClosed || locked || cooldown) { %>
               <div class="time-conversions">
                 <% if (user.timezone === 'Europe/Sofia') { %>
                   <div class="time-conversion">
@@ -154,9 +197,10 @@
                   </div>
                 <% } %>
               </div>
+              <% } %>
             <% } else { %>
               <div>
-                <div class="timer-face account-ready">READY TO TRADE</div>
+                <div class="timer-face <%= marketClosed ? 'account-closed' : 'account-ready' %>"><%= marketClosed ? 'MARKET CLOSED' : 'READY TO TRADE' %></div>
                 <p class="timer-hint">No lock or cooldown. Confirm your rules before the first entry.</p>
               </div>
               <div class="time-conversion checklist-summary">
@@ -166,6 +210,49 @@
                 </div>
               </div>
             <% } %>
+            <% if (closedMarketRecap) { %>
+            <div class="closed-market-recap">
+              <div class="card-row session-recap-heading">
+                <span class="card-label">WEEKLY RECAP</span>
+                <span class="session-recap-date" title="<%= closedMarketRecap.start %> – <%= closedMarketRecap.end %> · <%= user.timezone %>"><%= recapDateFormat.format(new Date(`${closedMarketRecap.start}T00:00:00Z`)) %> – <%= recapDateFormat.format(new Date(`${closedMarketRecap.end}T00:00:00Z`)) %></span>
+                <a class="card-link" href="/?calendarDate=<%= closedMarketRecap.start %>#calendar">REVIEW →</a>
+              </div>
+              <div class="session-recap-stats">
+                <div>
+                  <span>P&amp;L</span>
+                  <% if(closedMarketRecap.totals.size){ %>
+                    <% [...closedMarketRecap.totals].sort(([a],[b])=>a.localeCompare(b)).forEach(([currency,total])=>{ %>
+                      <strong class="<%= pnlClass(total) %>"><%= fmtPnl(total,currency) %></strong>
+                    <% }) %>
+                  <% }else{ %><strong>—</strong><% } %>
+                </div>
+                <div>
+                  <span>TRADES</span>
+                  <strong><%= closedMarketRecap.items.length %></strong>
+                  <small>W / L / BE · <%= closedMarketRecap.wins %> / <%= closedMarketRecap.losses %> / <%= closedMarketRecap.items.filter(t=>t.outcome==='BREAKEVEN').length %></small>
+                </div>
+                <div>
+                  <span>WIN RATE</span>
+                  <strong><%= closedMarketRecap.winRate %></strong>
+                </div>
+                <div>
+                  <span>PLAN</span>
+                  <strong><%= closedMarketRecap.planRate %></strong>
+                  <small>of <%= closedMarketRecap.knownPlan %> known</small>
+                </div>
+              </div>
+              <p class="session-footnote"><%= closedMarketRecap.items.length ? 'Win rate excludes break-even; plan excludes unknown statuses.' : 'No trades recorded for this week.' %></p>
+            </div>
+            <div class="session-last-trade">
+              <span class="visually-hidden">LAST RECORDED TRADE</span>
+              <% if(closedMarketRecap.latest){ const t=closedMarketRecap.latest; const date=dayKey(t.createdAt,user.timezone); %>
+                <a class="account-trade closed-market-last-trade" href="/?calendarDate=<%= encodeURIComponent(date) %>#calendar">
+                  <span><%= t.instrument || 'Trade' %> <em class="<%= t.side==='BUY'?'pnl-pos':t.side==='SELL'?'pnl-neg':'' %>"><%= t.side || '' %></em><br><small><%= recentDayFormat.format(new Date(`${date}T00:00:00Z`)) %> · <%= t.tradeTime || timeKey(t.createdAt,user.timezone) %> · <%= t.outcome %></small></span>
+                  <strong class="<%= pnlClass(t.pnl) %>"><%= fmtPnl(t.pnl,t.currency) %></strong>
+                </a>
+              <% }else{ %><strong>No trades recorded yet</strong><% } %>
+            </div>
+            <% }else{ %>
             <div class="time-conversions limits-left">
               <div class="time-conversion">
                 <span>TRADES LEFT TODAY</span>
@@ -195,11 +282,12 @@
                 </div>
               <% } %>
             </div>
+            <% } %>
           </section>
 
           <% if (preferences.showNyReminder) { %>
           <% const nyLive = nySession.phase && nySession.phase.startsWith('PRE-MARKET IS OPEN') ? 'premarket' : nySession.phase && nySession.phase.startsWith('REGULAR') ? 'regular' : ''; %>
-          <section class="panel ny-session-panel<%= nyLive ? ' is-' + nyLive : '' %>" id="nySessionPanel" aria-labelledby="nySessionTitle">
+          <section class="panel ny-session-panel session-card<%= nyLive ? ' is-' + nyLive : '' %>" id="nySessionPanel" aria-labelledby="nySessionTitle">
             <div class="section-heading">
               <span id="nySessionTitle">NEW YORK SESSION</span>
               <span class="tag ny-session-badge" id="nySessionBadge"><%= nyLive === 'premarket' ? 'PRE-MARKET OPEN' : nyLive === 'regular' ? 'NY SESSION OPEN' : 'US EQUITIES · ET' %></span>
@@ -211,7 +299,8 @@
             </div>
             <div class="ny-session-phase visually-hidden" id="nySessionPhase"><%= nySession.phase %></div>
             <div class="ny-session-milestone" id="nySessionMilestone">NEXT PRE-MARKET · 8:30 AM ET</div>
-            <div class="timer-face ny-session-timer" id="nySessionTimer" data-schedule="<%= encodeURIComponent(JSON.stringify(nySession.schedule)) %>" data-account-timezone="<%= user.timezone %>">0d 00h 00m 00s</div>
+            <div class="timer-face ny-session-timer session-countdown" id="nySessionTimer" data-countdown-style="units" data-schedule="<%= encodeURIComponent(JSON.stringify(nySession.schedule)) %>" data-account-timezone="<%= user.timezone %>"><span data-countdown-part>0</span><small>d</small><span data-countdown-part>00</span><small>h</small><span data-countdown-part>00</span><small>m</small><span data-countdown-part>00</span><small>s</small></div>
+            <p class="session-when" id="nySessionWhen"></p>
             <div class="ny-session-timeline" aria-label="New York time: pre-market 8:30 to 9:30 AM, regular session 9:30 AM to 4 PM">
               <div class="ny-timeline-track">
                 <span class="ny-timeline-pre">PRE</span>
@@ -239,11 +328,15 @@
             </div>
             <p class="muted small">Confirm each statement honestly before every trade.</p>
             <% if (locked || cooldown) { %>
+              <%
+                const checklistUnlockAt = typeof checklistAvailableAt !== 'undefined' ? checklistAvailableAt : availableAt;
+                const checklistUnlockLabel = typeof checklistAvailableAtLabel !== 'undefined' ? checklistAvailableAtLabel : availableAtLabel;
+              %>
               <div class="checklist-paused <%= locked ? 'paused-locked' : 'paused-cooldown' %>">
                 <strong><%= locked ? 'CHECKLIST PAUSED · DAILY LOCK' : 'CHECKLIST PAUSED · COOLDOWN' %></strong>
-                <span><%= locked ? lockReason : 'A recorded loss started a cooldown' %>. Trading becomes available at <%= availableAtLabel %> account time.</span>
-                <% if (availableAt) { %>
-                  <div class="timer-face checklist-unlock-timer <%= cooldown && !locked ? 'amber' : '' %>" data-until="<%= availableAt.toISOString() %>" aria-label="Time until trading is available">0d 00h 00m 00s</div>
+                <span><%= locked ? lockReason : 'A recorded loss started a cooldown' %>. Checklist becomes available at <%= checklistUnlockLabel %> account time.</span>
+                <% if (checklistUnlockAt) { %>
+                  <div class="timer-face checklist-unlock-timer <%= cooldown && !locked ? 'amber' : '' %>" data-until="<%= checklistUnlockAt.toISOString() %>" data-countdown-label="the checklist is available" aria-label="Time until the checklist is available">0d 00h 00m 00s</div>
                 <% } %>
                 <small>The page refreshes automatically when the countdown ends. If it does not, refresh manually to continue.</small>
               </div>
@@ -382,7 +475,7 @@
               <div class="fx-session-progress"><span></span></div>
             </article>
           </div>
-          <p class="micro">Opening and closing times are shown in Sofia time (Europe/Sofia), using a 24-hour clock. Timers count down to closing for active sessions, or the next weekday opening for closed sessions. Weekends are skipped; market holidays are not included. Sessions, overlaps and timers update live; daylight-saving changes are automatic.</p>
+          <p class="micro">Indicative regional session times are shown in Sofia time (Europe/Sofia), using a 24-hour clock. Active cards show the current session; closed cards show the next weekday session. Timers count down to that session's closing or opening. Weekdays follow each market's local timezone, so Sydney's Monday session can begin on Sunday in Bulgaria. Broker trading hours may differ; market holidays are not included. Sessions, overlaps and timers update live; daylight-saving changes are automatic.</p>
         </section>
         <% } %>
 
@@ -511,6 +604,11 @@
               <textarea name="planDeviationReason" maxlength="500" rows="2" <%= checklistCompleted ? '' : 'required' %> placeholder="Briefly explain what happened."></textarea>
             </label>
             <label>LESSON / NOTES<textarea name="notes" maxlength="3000" rows="3" placeholder="What happened? What did I learn?"></textarea></label>
+            <label>TRADINGVIEW SNAPSHOT LINK (OPTIONAL)
+              <input type="url" name="tradingViewUrl" maxlength="2048" placeholder="https://www.tradingview.com/x/..." data-tradingview-input autocomplete="url">
+            </label>
+            <p class="micro">Paste a public TradingView snapshot link to preview its chart image. The screenshot loads directly from TradingView.</p>
+            <div class="upload-preview tradingview-preview" data-tradingview-preview hidden></div>
             <label>TRADE IMAGES (OPTIONAL · UP TO 10 · JPEG, PNG OR WEBP · MAX 5 MB EACH)<input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple data-image-input></label>
             <div class="upload-preview" data-upload-preview hidden></div>
             <p class="notice danger upload-error" role="alert" hidden></p>
@@ -536,19 +634,37 @@
           <% if (!recentTrades.length) { %>
             <p class="empty">No trades recorded yet. Your latest five will appear here.</p>
           <% } else { %>
-            <div class="journal-list">
-              <% recentTrades.forEach(t => { %>
-                <div class="journal-item">
-                  <div class="journal-item-head">
-                    <strong><%= t.instrument || 'Trade' %><% if (t.side) { %> · <%= t.side %><% } %></strong>
-                    <strong class="<%= pnlClass(t.pnl) %>"><%= fmtPnl(t.pnl, t.currency) %></strong>
-                  </div>
-                  <p><%= dayKey(t.createdAt, user.timezone) %> · <%= t.tradeTime || timeKey(t.createdAt, user.timezone) %> · <%= t.outcome %> · <%= tradeAccountCount(t) %>× accounts · approx <%= approxAccountPnl(t) %> / account<% if (t.account) { %> · <%= t.account %><% } %><% if (t.session) { %> · <%= t.session %><% } %><% if (t.checklistCompleted === true) { %> · Checklist completed<% } else if (t.checklistCompleted === false) { %> · Checklist missed<% } %><% if (t.strategy) { %> · <%= t.strategy %><% } %><% if (t.followedPlan === false) { %> · Plan not followed<% } %></p>
-                  <% if (t.planDeviationReason) { %><p>Plan deviation: <%= t.planDeviationReason %></p><% } %>
-                </div>
-              <% }) %>
+            <div class="recent-trades-net">
+              <span>NET P&amp;L</span>
+              <div class="recent-trades-totals">
+                <% [...recentTradeTotals].sort(([a],[b])=>a.localeCompare(b)).forEach(([currency,total])=>{ %>
+                  <strong class="<%= pnlClass(total) %>"><%= fmtPnl(total,currency) %></strong>
+                <% }) %>
+              </div>
             </div>
-            <p class="micro">Open the Calendar tab to edit, replace images or delete a record.</p>
+            <% recentTradeDays.forEach((day,date)=>{ %>
+              <div class="recent-trade-group">
+                <div class="recent-trade-day">
+                  <span><%= recentDayFormat.format(new Date(`${date}T00:00:00Z`)).toUpperCase() %></span>
+                  <div class="recent-trade-day-totals">
+                    <% [...day.totals].sort(([a],[b])=>a.localeCompare(b)).forEach(([currency,total])=>{ %>
+                      <b class="<%= pnlClass(total) %>"><%= fmtPnl(total,currency) %></b>
+                    <% }) %>
+                  </div>
+                </div>
+                <% day.trades.forEach(t=>{ %>
+                  <a class="recent-trade-row" href="/?calendarDate=<%= encodeURIComponent(date) %>#calendar" aria-label="View calendar records for <%= date %>: <%= t.instrument || 'Trade' %>">
+                    <span class="recent-trade-time"><%= t.tradeTime || timeKey(t.createdAt,user.timezone) %></span>
+                    <span class="recent-trade-name">
+                      <%= t.instrument || 'Trade' %><% if(t.side){ %><span class="recent-trade-side <%= t.side==='SELL'?'pnl-neg':'pnl-pos' %>"><%= t.side %></span><% } %>
+                      <% if(t.followedPlan===false){ %><span class="recent-trade-sub pnl-neg">Plan broken</span><% }else if(t.strategy){ %><span class="recent-trade-sub"><%= t.strategy %></span><% } %>
+                    </span>
+                    <span class="recent-trade-amount <%= pnlClass(t.pnl) %>"><%= fmtPnl(t.pnl,t.currency) %></span>
+                  </a>
+                <% }) %>
+              </div>
+            <% }) %>
+            <a class="recent-trades-more" href="#calendar">OPEN CALENDAR TO EDIT →</a>
           <% } %>
           <div class="no-setup-records">
             <div class="section-heading"><span>NO-SETUP ENTRIES</span><span class="tag"><%= noSetupRecords.length %></span></div>
@@ -656,6 +772,11 @@
           </label>
           <p id="tradeChecklistStatus" class="micro"></p>
           <label>LESSON / NOTES<textarea name="notes" id="tradeNotes" maxlength="3000" rows="3"></textarea></label>
+          <label>TRADINGVIEW SNAPSHOT LINK (OPTIONAL)
+            <input type="url" name="tradingViewUrl" id="tradeTradingViewUrl" maxlength="2048" placeholder="https://www.tradingview.com/x/..." data-tradingview-input autocomplete="url">
+          </label>
+          <p class="micro">Paste a public TradingView snapshot link to preview its chart image. The screenshot loads directly from TradingView.</p>
+          <div class="upload-preview tradingview-preview" data-tradingview-preview hidden></div>
           <div id="tradeExistingImage" class="trade-existing-images"></div>
           <label>ADD TRADE IMAGES (OPTIONAL · UP TO 10 PER TRADE · JPEG, PNG OR WEBP · MAX 5 MB EACH)<input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple data-image-input></label>
           <div class="upload-preview" data-upload-preview hidden></div>
@@ -669,6 +790,7 @@
           <button type="button" class="ghost" id="imageZoomOut" aria-label="Zoom out" disabled>−</button>
           <button type="button" class="ghost" id="imageZoomReset" aria-label="Reset image zoom" disabled>100%</button>
           <button type="button" class="ghost" id="imageZoomIn" aria-label="Zoom in" disabled>+</button>
+          <a id="imagePreviewTradingView" class="ghost" target="_blank" rel="noopener noreferrer" hidden>VIEW IN TRADINGVIEW</a>
           <form method="dialog" class="dialog-close-form">
             <button type="submit" class="ghost image-preview-close" aria-label="Close image preview">CLOSE ✕</button>
           </form>
@@ -680,21 +802,33 @@
       </dialog>
 
       <dialog id="strategyTradesDialog" class="rule-dialog strategy-trades-dialog" aria-labelledby="strategyTradesTitle">
-        <div class="rule-dialog-head">
-          <div>
-            <div class="eyebrow">STRATEGY RECORDS</div>
-            <h2 id="strategyTradesTitle"></h2>
-            <p id="strategyTradesPeriod" class="micro"></p>
+        <div class="strategy-trades-head">
+          <div class="rule-dialog-head">
+            <div>
+              <div class="eyebrow">STRATEGY RECORDS</div>
+              <h2 id="strategyTradesTitle"></h2>
+              <p id="strategyTradesPeriod" class="micro"></p>
+            </div>
+            <form method="dialog" class="dialog-close-form">
+              <button type="submit" class="rule-dialog-close ghost" aria-label="Close strategy records">✕</button>
+            </form>
           </div>
-          <form method="dialog" class="dialog-close-form">
-            <button type="submit" class="rule-dialog-close ghost" aria-label="Close strategy records">✕</button>
-          </form>
+          <div id="strategyTradesSummary" class="strategy-trades-summary"></div>
+          <div class="strategy-trades-tools">
+            <div class="strategy-trades-filters" role="group" aria-label="Trade outcome">
+              <button type="button" data-strategy-outcome="ALL" aria-pressed="true">ALL</button>
+              <button type="button" data-strategy-outcome="WIN" aria-pressed="false">WINS</button>
+              <button type="button" data-strategy-outcome="LOSS" aria-pressed="false">LOSSES</button>
+            </div>
+            <select id="strategyTradesRange" aria-label="Strategy records period"></select>
+          </div>
         </div>
-        <div id="strategyTradesList" class="strategy-trades-list"></div>
+        <div id="strategyTradesList" class="strategy-trades-list" aria-live="polite"></div>
       </dialog>
 
       <section class="dashboard-tabpanel" id="calendar" role="tabpanel" aria-labelledby="tab-calendar" hidden>
         <section class="panel performance-calendar">
+          <section class="cal-block cal-year" aria-label="Year overview">
           <div class="section-heading calendar-head">
             <div>
               <h2>MONTH BY MONTH</h2>
@@ -708,6 +842,8 @@
             </div>
           </div>
           <div id="monthlyPerformance" class="monthly-performance" role="group" aria-label="Monthly profit and loss; select a month"></div>
+          </section>
+          <section class="cal-block cal-month" aria-label="Month calendar">
           <div class="calendar-workspace">
             <aside class="calendar-overview">
               <div class="calendar-nav">
@@ -724,40 +860,78 @@
               <div id="calendarGrid" class="calendar" data-timezone="<%= user.timezone %>" data-today="<%= today %>" data-csrf="<%= csrf %>" data-default-currency="<%= preferences.calendarCurrency %>" data-analysis-range="<%= preferences.analysisRange %>"></div>
             </div>
           </div>
-          <details class="calendar-month-table">
-            <summary>All months in a table</summary>
-            <div class="calendar-table-scroll">
-              <table>
-                <thead><tr><th scope="col">Month</th><th scope="col">Trades</th><th scope="col">Win rate</th><th scope="col">Net P&amp;L</th></tr></thead>
-                <tbody id="calendarMonthRows"></tbody>
-              </table>
+          </section>
+          <section class="cal-block cal-day" aria-label="Day records">
+            <h3 class="cal-title"><span>DAY RECORDS</span><small>Click a day above</small></h3>
+            <div id="selectedDay" class="day-summary">Select a day in the calendar to review its trades.</div>
+          </section>
+          <details class="calendar-month-table calendar-disclosure">
+            <summary><span>All months</span><em>Results for every month of a year</em></summary>
+            <div class="calendar-month-table-body">
+              <div class="calendar-table-toolbar">
+                <div>
+                  <span class="day-records-kicker">YEARLY PERFORMANCE</span>
+                  <p class="micro">Select a month to review its calendar and trades.</p>
+                </div>
+                <label class="calendar-table-year">YEAR
+                  <select id="calendarTableYear" aria-label="Monthly table year"></select>
+                </label>
+              </div>
+              <div class="calendar-table-scroll" tabindex="0" role="region" aria-label="Monthly results and yearly totals">
+                <table>
+                  <caption id="calendarMonthTableCaption"></caption>
+                  <thead><tr><th scope="col">Month</th><th scope="col">Trades</th><th scope="col">Win rate</th><th scope="col">Net P&amp;L</th></tr></thead>
+                  <tbody id="calendarMonthRows"></tbody>
+                  <tfoot><tr><th scope="row">Year total</th><td id="calendarYearTrades"></td><td id="calendarYearWinRate"></td><td id="calendarYearPnl"></td></tr></tfoot>
+                </table>
+              </div>
+              <section id="calendarMonthTrades" class="calendar-month-trades" aria-labelledby="calendarMonthTradesTitle" hidden>
+                <h3 id="calendarMonthTradesTitle"></h3>
+                <p class="micro">Select a trade date to open that day's records.</p>
+                <div class="calendar-table-scroll" tabindex="0" role="region" aria-label="Selected month trade records">
+                  <table>
+                    <thead><tr><th scope="col">Date / time</th><th scope="col">Instrument</th><th scope="col">Side</th><th scope="col">Strategy</th><th scope="col">Outcome</th><th scope="col">P&amp;L</th></tr></thead>
+                    <tbody id="calendarMonthTradeRows" aria-live="polite"></tbody>
+                  </table>
+                </div>
+              </section>
             </div>
           </details>
-          <div id="selectedDay" class="day-summary">Select a day to review its trade records.</div>
-          <details class="calendar-analysis-details">
-            <summary>Detailed performance analysis</summary>
+          <details class="calendar-analysis-details calendar-disclosure">
+            <summary><span>Day &amp; period overview</span><em>Stats, charts and streaks for a period</em></summary>
           <section class="calendar-analysis" aria-labelledby="analysisTitle">
             <div class="analysis-heading">
               <div>
                 <h2 id="analysisTitle">PERFORMANCE ANALYSIS</h2>
                 <p id="analysisPeriodLabel">Selected month</p>
               </div>
-              <div class="analysis-periods" role="group" aria-label="Analysis period">
+              <div class="analysis-controls">
+                <div class="analysis-periods" role="group" aria-label="Analysis period">
+                <button type="button" class="analysis-period" data-analysis-range="day" aria-pressed="false">DAY</button>
                 <button type="button" class="analysis-period is-selected" data-analysis-range="month" aria-pressed="true">MONTH</button>
                 <button type="button" class="analysis-period" data-analysis-range="7d" aria-pressed="false">7 DAYS</button>
                 <button type="button" class="analysis-period" data-analysis-range="30d" aria-pressed="false">30 DAYS</button>
                 <button type="button" class="analysis-period" data-analysis-range="all" aria-pressed="false">ALL TIME</button>
+                </div>
+                <label class="analysis-currency-label">STATS &amp; CHART CURRENCY
+                  <select id="analysisCurrency" aria-label="Statistics and chart currency" disabled></select>
+                </label>
               </div>
             </div>
-            <div class="analysis-metrics">
+            <div class="analysis-tabs" role="tablist" aria-label="Overview sections">
+              <button type="button" id="analysisTabSummary" class="analysis-tab is-selected" role="tab" aria-selected="true" aria-controls="analysisPaneSummary" data-analysis-pane="summary">SUMMARY</button>
+              <button type="button" id="analysisTabStats" class="analysis-tab" role="tab" aria-selected="false" aria-controls="analysisPaneStats" tabindex="-1" data-analysis-pane="stats">ACCOUNT IN NUMBERS</button>
+              <button type="button" id="analysisTabCharts" class="analysis-tab" role="tab" aria-selected="false" aria-controls="analysisPaneCharts" tabindex="-1" data-analysis-pane="charts">CHARTS</button>
+            </div>
+            <div id="analysisPaneSummary" class="analysis-pane" role="tabpanel" aria-labelledby="analysisTabSummary" data-pane="summary">
+              <div class="analysis-metrics">
               <article class="analysis-metric"><span>TRADES</span><strong id="analysisTradeCount">0</strong></article>
               <article class="analysis-metric"><span>NO-SETUP ENTRIES</span><strong id="analysisNoSetupCount">0</strong></article>
               <article class="analysis-metric"><span>WIN RATE</span><strong id="analysisWinRate">—</strong></article>
               <article class="analysis-metric"><span>PLAN FOLLOWED</span><strong id="analysisPlanRate">—</strong></article>
               <article class="analysis-metric analysis-net"><span>NET P&amp;L · BY CURRENCY</span><div id="analysisNetPnl"></div></article>
             </div>
-            <p class="analysis-footnote">No-setup entries are counted separately from trades and include all currencies. Plan adherence excludes records whose plan status was not recorded.</p>
-            <section class="strategy-analysis" aria-labelledby="strategyAnalysisTitle">
+              <section class="strategy-analysis" aria-labelledby="strategyAnalysisTitle">
               <div class="analysis-chart-heading">
                 <div>
                   <h3 id="strategyAnalysisTitle">STRATEGY WIN RATE</h3>
@@ -765,22 +939,8 @@
                 </div>
               </div>
               <div id="strategyAnalysis" class="strategy-analysis-list"></div>
-              <p class="analysis-footnote">Select a strategy to view its records. All currencies · wins divided by wins and losses. Break-even trades are excluded from the win rate.</p>
             </section>
-            <section class="performance-stats" aria-labelledby="performanceStatsTitle">
-              <div class="analysis-chart-heading">
-                <div>
-                  <h3 id="performanceStatsTitle">ACCOUNT IN NUMBERS</h3>
-                  <p id="performanceStatsCaption"></p>
-                </div>
-                <label class="analysis-currency-label">STATS &amp; CHART CURRENCY
-                  <select id="analysisCurrency" aria-label="Statistics and chart currency" disabled></select>
-                </label>
-              </div>
-              <div id="performanceStats"></div>
-              <p class="analysis-footnote">These statistics use only the selected currency and analysis period. Monthly averages include recorded months only; partial months use only trades in this period. Average wins/losses and profit factor use signed P&amp;L. Win rate uses recorded outcomes, excluding break-even. Drawdown uses realized cumulative P&amp;L starting at zero, not account equity; percentage drawdown requires balance history.</p>
-            </section>
-            <section class="streak-analysis" aria-label="Winning and losing streaks">
+              <section class="streak-analysis" aria-label="Winning and losing streaks">
               <article class="streak-card streak-win">
                 <span>WIN STREAK</span>
                 <div><strong id="currentWinStreak">0</strong><small>current</small></div>
@@ -792,7 +952,20 @@
                 <div><strong id="worstLossStreak">0</strong><small>worst in period</small></div>
               </article>
             </section>
-            <div class="analysis-charts">
+            </div>
+            <div id="analysisPaneStats" class="analysis-pane" role="tabpanel" aria-labelledby="analysisTabStats" data-pane="stats" hidden>
+              <section class="performance-stats" aria-labelledby="performanceStatsTitle">
+              <div class="analysis-chart-heading">
+                <div>
+                  <h3 id="performanceStatsTitle">ACCOUNT IN NUMBERS</h3>
+                  <p id="performanceStatsCaption"></p>
+                </div>
+              </div>
+              <div id="performanceStats"></div>
+            </section>
+            </div>
+            <div id="analysisPaneCharts" class="analysis-pane" role="tabpanel" aria-labelledby="analysisTabCharts" data-pane="charts" hidden>
+              <div class="analysis-charts">
               <section class="analysis-chart-card" aria-labelledby="equityChartTitle">
                 <div class="analysis-chart-heading">
                   <div>
@@ -809,7 +982,7 @@
                 <div class="outcome-breakdown" id="outcomeBreakdown"></div>
               </section>
             </div>
-            <section class="daily-analysis" aria-labelledby="dailyAnalysisTitle">
+              <section class="daily-analysis" aria-labelledby="dailyAnalysisTitle">
               <div class="analysis-chart-heading">
                 <div>
                   <h3 id="dailyAnalysisTitle">DAY-BY-DAY RESULTS</h3>
@@ -818,10 +991,22 @@
               </div>
               <div class="daily-bars" id="dailyBars" role="list" aria-label="Daily profit and loss"></div>
             </section>
-            <p class="analysis-footnote">Win rate excludes break-even trades. A break-even trade resets a streak. P&amp;L is never combined across different currencies.</p>
+            </div>
+            <details class="analysis-notes">
+              <summary>How these numbers are calculated</summary>
+              <ul>
+                <li>Win rate = wins ÷ (wins + losses). Break-even trades are excluded, and a break-even resets a streak.</li>
+                <li>Plan followed excludes records where the plan status was not recorded.</li>
+                <li>No-setup entries are counted separately from trades, in all currencies.</li>
+                <li>Statistics and charts use one currency at a time. P&amp;L is never converted or combined.</li>
+                <li>Average win/loss and profit factor use signed P&amp;L. Monthly averages include recorded months only.</li>
+                <li>Drawdown is realized cumulative P&amp;L from zero, not account equity. Percentage returns need balance history, so they are not calculated.</li>
+                <li>Commissions and volume are not collected.</li>
+              </ul>
+            </details>
           </section>
           </details>
-          <p class="micro">Calendar P&amp;L uses the selected currency only, without currency conversion. Green = positive · Red = negative · Grey = break-even. Return percentages require account balance data and are not calculated.</p>
+          <div class="calendar-legend" aria-label="Colour legend"><span class="lg-pos">Positive</span><span class="lg-neg">Negative</span><span class="lg-be">Break-even</span><small>One currency at a time, no conversion.</small></div>
         </section>
       </section>
 
@@ -944,7 +1129,7 @@
         <span>Personal discipline tool, not a broker-level trading lock.</span>
       </footer>
     </main>
-    <script id="trade-data" type="application/json"><%- JSON.stringify(trades.map(t => ({id: String(t._id), date: dayKey(t.createdAt, user.timezone), createdAt: t.createdAt.toISOString(), tradeTime: t.tradeTime || timeKey(t.createdAt, user.timezone), account: t.account || '', accountCount: Number(t.accountCount)||1, session: t.session || '', checklistCompleted: t.checklistCompleted ?? null, planDeviationReason: t.planDeviationReason || '', instrument: t.instrument, side: t.side, strategy: t.strategy || '', outcome: t.outcome, pnl: t.pnl, currency: t.currency || 'USD', emotion: t.emotion, followedPlan: t.followedPlan ?? null, notes: t.notes, images: t.images && t.images.length ? t.images.map(image => image.id) : (t.imageId ? [t.imageId] : [])}))).replace(/</g, '\\u003c') %></script>
+    <script id="trade-data" type="application/json"><%- JSON.stringify(trades.map(t => ({id: String(t._id), date: dayKey(t.createdAt, user.timezone), createdAt: t.createdAt.toISOString(), tradeTime: t.tradeTime || timeKey(t.createdAt, user.timezone), account: t.account || '', accountCount: Number(t.accountCount)||1, session: t.session || '', checklistCompleted: t.checklistCompleted ?? null, planDeviationReason: t.planDeviationReason || '', instrument: t.instrument, side: t.side, strategy: t.strategy || '', outcome: t.outcome, pnl: t.pnl, currency: t.currency || 'USD', emotion: t.emotion, followedPlan: t.followedPlan ?? null, notes: t.notes, tradingViewId: t.tradingViewId || '', images: t.images && t.images.length ? t.images.map(image => image.id) : (t.imageId ? [t.imageId] : [])}))).replace(/</g, '\\u003c') %></script>
     <script id="no-setup-data" type="application/json"><%- JSON.stringify(noSetupRecords.map(entry => ({id:String(entry._id),date:entry.date,notes:entry.notes}))).replace(/</g, '\\u003c') %></script>
   </body>
 </html>

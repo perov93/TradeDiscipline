@@ -34,6 +34,9 @@ const {
     planFollowUpError
 } = require('./lib/checklist');
 const {
+    tradingViewSnapshotId
+} = require('./lib/tradingview');
+const {
     recordReturnTo
 } = require('./lib/navigation');
 const app = express();
@@ -257,6 +260,18 @@ function zonedTime(dateKeyValue, hour, minute, tz) {
     return new Date(result)
 }
 
+function nextFuturesTradingTime(date) {
+    const key = dayKey(date, 'America/New_York'),
+        [year, month, day] = key.split('-').map(Number),
+        weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    const closed = weekday === 6 ||
+        (weekday === 5 && date >= zonedTime(key, 17, 0, 'America/New_York')) ||
+        (weekday === 0 && date < zonedTime(key, 18, 0, 'America/New_York'));
+    if (!closed) return date;
+    const sunday = new Date(Date.UTC(year, month - 1, day + (7 - weekday) % 7));
+    return zonedTime(dayKey(sunday, 'UTC'), 18, 0, 'America/New_York')
+}
+
 function nySessionSchedule(now) {
     const today = dayKey(now, 'America/New_York'),
         [year, month, day] = today.split('-').map(Number),
@@ -366,14 +381,19 @@ async function dashboard(req, res) {
         }]);
     const now = new Date(),
         today = dayKey(now, user.timezone),
-        nySession = nySessionSchedule(now);
+        nySession = nySessionSchedule(now),
+        futuresOpenAt = nextFuturesTradingTime(now),
+        marketClosed = futuresOpenAt.getTime() !== now.getTime();
     const todays = trades.filter(t => dayKey(t.createdAt, user.timezone) === today),
         losses = todays.filter(t => t.outcome === 'LOSS').length;
     const locked = state.stopped || todays.length >= user.limits.maxTrades || losses >= user.limits.maxLosses,
         lockReason = state.stopped ? 'Emergency stop' : losses >= user.limits.maxLosses ? 'Daily loss limit reached' : 'Daily trade limit reached';
     const cooldown = !!(state.cooldownUntil && state.cooldownUntil > now);
-    const availableAt = locked ? startOfNextDay(now, user.timezone) : cooldown ? state.cooldownUntil : null,
-        availableAtLabel = availableAt ? new Intl.DateTimeFormat('en-GB', {
+    const dailyResetAt = locked ? startOfNextDay(now, user.timezone) : null,
+        checklistAvailableAt = locked ? dailyResetAt : cooldown ? state.cooldownUntil : null,
+        availableAt = locked ? nextFuturesTradingTime(dailyResetAt) : cooldown ? state.cooldownUntil : marketClosed ? futuresOpenAt : null,
+        futuresOpeningCountdown = marketClosed && !locked && !cooldown || locked && availableAt.getTime() !== dailyResetAt.getTime(),
+        accountTimeFormat = new Intl.DateTimeFormat('en-GB', {
             timeZone: user.timezone,
             day: 'numeric',
             month: 'short',
@@ -381,7 +401,9 @@ async function dashboard(req, res) {
             hour: '2-digit',
             minute: '2-digit',
             timeZoneName: 'short'
-        }).format(availableAt) : null,
+        }),
+        availableAtLabel = availableAt ? accountTimeFormat.format(availableAt) : null,
+        checklistAvailableAtLabel = checklistAvailableAt ? accountTimeFormat.format(checklistAvailableAt) : null,
         availableAtBulgariaLabel = availableAt ? new Intl.DateTimeFormat('en-GB', {
             timeZone: 'Europe/Sofia',
             day: 'numeric',
@@ -415,10 +437,14 @@ async function dashboard(req, res) {
         locked,
         lockReason,
         cooldown,
+        marketClosed,
         availableAt,
         availableAtLabel,
         availableAtBulgariaLabel,
         availableAtNyLabel,
+        futuresOpeningCountdown,
+        checklistAvailableAt,
+        checklistAvailableAtLabel,
         nySession,
         active,
         checks,
@@ -607,7 +633,12 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
             sessionChoice = req.body.session === undefined ? 'auto' : req.body.session,
             followedPlan = req.body.followedPlan === 'on',
             planDeviationReason = String(req.body.planDeviationReason || '').trim(),
-            strategy = String(req.body.strategy || '').trim();
+            strategy = String(req.body.strategy || '').trim(),
+            tradingViewId = req.body.tradingViewUrl === undefined ? '' : tradingViewSnapshotId(req.body.tradingViewUrl);
+        if (tradingViewId === null) {
+            await discardRequestImages(req);
+            return fail(req, 'Enter a valid public TradingView snapshot link.', '/#journal')
+        }
         if (!['WIN', 'LOSS', 'BREAKEVEN'].includes(outcome)) {
             await discardRequestImages(req);
             return fail(req, 'Choose a trade result.', '/#journal')
@@ -672,6 +703,7 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
                 tradeTime,
                 createdAt,
                 images,
+                tradingViewId,
                 followedPlan
             });
         committed = true;
@@ -707,7 +739,13 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
             followedPlanValue = req.body.followedPlan,
             followedPlan = followedPlanValue === 'yes' ? true : followedPlanValue === 'no' ? false : followedPlanValue === 'unknown' ? null : undefined,
             planDeviationReason = String(req.body.planDeviationReason || '').trim(),
-            strategy = String(req.body.strategy || '').trim();
+            strategy = String(req.body.strategy || '').trim(),
+            hasTradingViewUrl = Object.prototype.hasOwnProperty.call(req.body, 'tradingViewUrl'),
+            tradingViewId = hasTradingViewUrl ? tradingViewSnapshotId(req.body.tradingViewUrl) : undefined;
+        if (tradingViewId === null) {
+            await discardRequestImages(req);
+            return fail(req, 'Enter a valid public TradingView snapshot link.', recordReturnTo(req.body))
+        }
         if (!['WIN', 'LOSS', 'BREAKEVEN'].includes(outcome)) {
             await discardRequestImages(req);
             return fail(req, 'Choose a trade result.', recordReturnTo(req.body))
@@ -786,6 +824,7 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
         trade.followedPlan = followedPlan;
         trade.planDeviationReason = followedPlan === false ? planDeviationReason : '';
         trade.notes = String(req.body.notes || '').slice(0, 3000);
+        if (hasTradingViewUrl) trade.tradingViewId = tradingViewId;
         trade.images = [...retainedImages, ...uploadedImages];
         trade.imageId = '';
         trade.imageMime = '';

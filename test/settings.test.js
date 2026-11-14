@@ -149,7 +149,7 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
     user,csrf:'test-token',me:{name:user.name},error:null,success:'Saved',
     preferencesFor,settingsTimezones:TIMEZONES,settingsCurrencies:CURRENCIES,sessionChoices:SESSION_CHOICES,
     state:{checks:[],cooldownUntil:null,stopped:false},rules:[],trades:[],pnlTotals:[],
-    todays:[],losses:0,locked:false,lockReason:'',cooldown:false,availableAt:null,
+    todays:[],losses:0,locked:false,lockReason:'',cooldown:false,marketClosed:false,futuresOpeningCountdown:false,availableAt:null,
     availableAtLabel:null,availableAtBulgariaLabel:null,availableAtNyLabel:null,
     nySession:{phase:'Waiting',milestone:'Next',schedule:[]},
     active:[],checks:[],checklistCompleted:false,today:'2026-11-10',dayKey:()=> '2026-11-10',timeKey:()=> '12:34',limits:user.limits
@@ -213,7 +213,7 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(readyHtml,/name="accountCount"[^>]+value="5"/);
   assert.match(readyHtml,/name="accountCount" id="tradeAccountCount"[^>]+value="1"/);
   assert.match(readyHtml,/COMBINED P&amp;L/);
-  assert.match(readyHtml,/5× accounts · approx \+22\.48 USD \/ account/);
+  assert.match(readyHtml,/class="recent-trades-net"/);
   assert.match(readyHtml,/"accountCount":5/);
   const noSetupHtml=ejs.render(template,{...cardLocals,noSetupEntries:[{_id:'entry1',date:'2026-11-10',notes:'<script>unsafe</script>'}]});
   assert.match(noSetupHtml,/NO SETUP PRESENTED · ADD ENTRY/);
@@ -221,6 +221,10 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(noSetupHtml,/action="\/no-setup\/entry1\/delete"/);
   assert.match(noSetupHtml,/&lt;script&gt;unsafe&lt;\/script&gt;/);
   assert.match(noSetupHtml,/not included in the trade CSV/);
+  const tradingViewHtml=ejs.render(template,{...cardLocals,trades:[{...todays[0],tradingViewId:'ZWvJ4X1B'}]});
+  assert.match(tradingViewHtml,/name="tradingViewUrl" maxlength="2048"/);
+  assert.match(tradingViewHtml,/id="tradeTradingViewUrl" maxlength="2048"/);
+  assert.match(tradingViewHtml,/"tradingViewId":"ZWvJ4X1B"/);
   assert.match(readyHtml,/READY TO TRADE/);
   assert.match(readyHtml,/<strong id="checklistProgressValue">1 of 2<\/strong><a class="card-link" href="#trade">OPEN →<\/a>/);
   assert.match(readyHtml,/<div class="time-conversion checklist-summary">\s*<div class="card-row"><span>CHECKLIST<\/span><div class="checklist-summary-value">/);
@@ -228,6 +232,15 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(readyHtml,/\+112\.40 USD/);
   assert.match(readyHtml,/−20\.00 EUR/);
   assert.match(readyHtml,/EURUSD · SELL/);
+  const marketClosedHtml=ejs.render(template,{...cardLocals,marketClosed:true,futuresOpeningCountdown:true,availableAt:new Date('2026-11-15T23:00:00Z'),availableAtLabel:'16 Nov 2026, 01:00 EET',availableAtNyLabel:'15 Nov 2026, 6:00 PM EST',availableAtBulgariaLabel:'16 Nov 2026, 01:00 EET'});
+  assert.match(marketClosedHtml,/class="trade-status status-closed">CLOSED<\/span>/);
+  assert.match(marketClosedHtml,/MARKET CLOSED/);
+  assert.match(marketClosedHtml,/>NEXT FUTURES OPEN IN<\/div>/);
+  assert.match(marketClosedHtml,/data-countdown-label="the next futures opening"/);
+  assert.doesNotMatch(marketClosedHtml,/READY TO TRADE/);
+  const closedCard=marketClosedHtml.slice(marketClosedHtml.indexOf('<section class="panel timer-panel'),marketClosedHtml.indexOf('</section>',marketClosedHtml.indexOf('<section class="panel timer-panel')));
+  assert.doesNotMatch(closedCard,/Futures are outside their trading hours|Trading resumes at the next market opening|Your account \+ Bulgaria|<span>New York<\/span>/);
+  assert.match(closedCard,/WEEKLY RECAP|LAST RECORDED TRADE/);
   assert.match(readyHtml,/<div class="time-conversion account-today">/);
   assert.match(readyHtml,/aria-label="Trades left today"[^>]+aria-valuenow="1"/);
   const lockedHtml=ejs.render(template,{...cardLocals,locked:true,lockReason:'Emergency stop',availableAt:new Date('2026-11-11T00:00:00Z'),availableAtLabel:'midnight',availableAtNyLabel:'New York',availableAtBulgariaLabel:'Bulgaria'});
@@ -235,6 +248,17 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(lockedHtml,/Emergency stop/);
   assert.match(lockedHtml,/data-until=/);
   assert.doesNotMatch(lockedHtml,/READY TO TRADE/);
+  assert.match(lockedHtml,/>UNLOCKS IN<\/div>/);
+  const weekendHtml=ejs.render(template,{...cardLocals,locked:true,lockReason:'Daily loss limit reached',futuresOpeningCountdown:true,availableAt:new Date('2026-11-15T23:00:00Z'),availableAtLabel:'16 Nov 2026, 01:00 EET',availableAtNyLabel:'15 Nov 2026, 6:00 PM EST',availableAtBulgariaLabel:'16 Nov 2026, 01:00 EET',checklistAvailableAt:new Date('2026-11-13T22:00:00Z'),checklistAvailableAtLabel:'14 Nov 2026, 00:00 EET'});
+  assert.match(weekendHtml,/>NEXT FUTURES OPEN IN<\/div>/);
+  assert.match(weekendHtml,/data-until="2026-11-15T23:00:00\.000Z"/);
+  assert.match(weekendHtml,/data-countdown-label="the next futures opening"/);
+  assert.match(weekendHtml,/16 Nov 2026, 01:00 EET/);
+  assert.doesNotMatch(weekendHtml,/class="account-lock-reason"/);
+  assert.doesNotMatch(weekendHtml,/Resets at midnight in your account timezone/);
+  assert.doesNotMatch(weekendHtml,/The countdown shows the next futures opening/);
+  assert.match(weekendHtml,/Checklist becomes available at 14 Nov 2026, 00:00 EET/);
+  assert.match(weekendHtml,/class="timer-face checklist-unlock-timer "[^>]+data-until="2026-11-13T22:00:00\.000Z"/);
   const completedHtml=ejs.render(template,{...locals,state:{checks:['rule-1'],checkTime:new Date()},checks:['rule-1'],active:[{_id:'rule-1'}],checklistCompleted:true});
   assert.match(completedHtml,/action="\/check\/reset"/);
   assert.match(completedHtml,/RESET CHECKLIST · NO TRADE/);
