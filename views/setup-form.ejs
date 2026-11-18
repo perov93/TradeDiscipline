@@ -1,0 +1,46 @@
+<% const example=setup || {};
+   const chosenSession=example.session || 'auto'; %>
+<form method="post" action="<%= setup ? '/setups/'+setup._id+'/edit' : '/setups' %>" class="journal-form" enctype="multipart/form-data" data-image-upload>
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <label>SETUP NAME<input name="title" maxlength="140" required value="<%= example.title || '' %>" placeholder="e.g. NY open breakout"></label>
+  <div class="form-row">
+    <label>TRADING SESSION<select name="session">
+      <% sessionChoices.forEach(choice=>{ %>
+        <option value="<%= choice %>" <%= choice===chosenSession?'selected':'' %>><%= choice==='auto'?'Automatic · based on save time':choice %></option>
+      <% }) %>
+    </select></label>
+    <label>TRADE ENTRY TIME (<%= user.timezone %>)<input type="time" name="tradeTime" required value="<%= example.tradeTime || timeKey(new Date(),user.timezone) %>"></label>
+  </div>
+  <div class="form-row">
+    <label>INSTRUMENT<input name="instrument" maxlength="40" value="<%= example.instrument || '' %>" placeholder="XAUUSD"></label>
+    <label>DIRECTION<select name="side">
+      <% [['','Not specified'],['BUY','BUY'],['SELL','SELL']].forEach(([value,label])=>{ %>
+        <option value="<%= value %>" <%= (example.side || '')===value?'selected':'' %>><%= label %></option>
+      <% }) %>
+    </select></label>
+  </div>
+  <label>OUTCOME<select name="outcome" required>
+    <option value="" disabled <%= !example.outcome?'selected':'' %>>Choose an outcome</option>
+    <% ['WIN','LOSS','BREAKEVEN'].forEach(value=>{ %><option <%= example.outcome===value?'selected':'' %>><%= value %></option><% }) %>
+  </select></label>
+  <label>CURRENCY CODE<input name="currency" maxlength="3" minlength="3" pattern="[A-Za-z]{3}" required value="<%= example.currency || preferences.defaultCurrency %>"></label>
+  <label>STRATEGY<input name="strategy" maxlength="120" value="<%= example.strategy || '' %>"></label>
+  <label>LESSON / NOTES<textarea name="notes" maxlength="3000" rows="3"><%= example.notes || '' %></textarea></label>
+  <label>TRADINGVIEW SNAPSHOT LINK (OPTIONAL)<input type="url" name="tradingViewUrl" maxlength="2048" placeholder="https://www.tradingview.com/x/..." data-tradingview-input value="<%= example.tradingViewId ? 'https://www.tradingview.com/x/'+example.tradingViewId+'/' : '' %>"></label>
+  <p class="micro">Paste a public TradingView snapshot link to preview its chart image. The screenshot loads directly from TradingView.</p>
+  <div class="upload-preview tradingview-preview" data-tradingview-preview hidden></div>
+  <% if(setup && setup.images && setup.images.length){ %>
+    <div class="trade-existing-images" data-existing-images>
+      <% setup.images.forEach((image,index)=>{ %>
+        <div class="trade-existing-image">
+          <button type="button" class="image-preview-trigger" data-image-src="/setups/<%= setup._id %>/images/<%= image.id %>" aria-label="Preview setup image <%= index+1 %>"><img src="/setups/<%= setup._id %>/images/<%= image.id %>" alt="Setup image <%= index+1 %>" loading="lazy"></button>
+          <label class="inline-check"><input type="checkbox" name="removeImages" value="<%= image.id %>"> REMOVE IMAGE</label>
+        </div>
+      <% }) %>
+    </div>
+  <% } %>
+  <label>IMAGES (OPTIONAL · UP TO 10 · JPEG, PNG OR WEBP · MAX 5 MB EACH)<input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple data-image-input></label>
+  <div class="upload-preview" data-upload-preview hidden></div>
+  <p class="notice danger upload-error" role="alert" hidden></p>
+  <button type="submit" class="primary"><%= setup?'UPDATE EXAMPLE':'SAVE EXAMPLE' %></button>
+</form>

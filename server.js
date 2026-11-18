@@ -15,6 +15,7 @@ const {
     User,
     Rule,
     Trade,
+    SetupExample,
     State,
     Event,
     NoSetup
@@ -337,6 +338,12 @@ app.use('/settings', require('./routes/settings')({
 }));
 app.use('/no-setup', require('./routes/no-setup')({NoSetup,auth,validId}));
 app.use('/check', require('./routes/checklist')({User,auth,stateFor}));
+app.use('/setups', require('./routes/setups')({
+    SetupExample,auth,validId,receiveTradeImages,requestImages,discardRequestImages,
+    removeStoredImage,storedTradeImages,imageType,imageDirectory,maxTradeImages,
+    validTradeTime
+}));
+app.use('/setup-library', require('./routes/setup-library')({SetupExample,Trade,User,auth,dayKey,timeKey,zonedTime,startOfNextDay}));
 async function dashboard(req, res) {
     const user = await User.findById(req.session.user.id);
     if (!user) {
@@ -356,6 +363,7 @@ async function dashboard(req, res) {
             createdAt: -1
         }).lean(),
         noSetupEntries = await NoSetup.find({user:user._id}).sort({date:-1,createdAt:-1}).lean(),
+        setupExamples = await SetupExample.find({user:user._id}).sort({createdAt:-1,_id:-1}).limit(5).lean(),
         pnlTotals = await Trade.aggregate([{
             $match: {
                 user: user._id
@@ -379,6 +387,12 @@ async function dashboard(req, res) {
                 _id: 1
             }
         }]);
+    let selectedSetup = null;
+    if (req.query && req.query.setupId !== undefined) {
+        if (typeof req.query.setupId !== 'string' || !validId(req.query.setupId)) return res.sendStatus(404);
+        selectedSetup = await SetupExample.findOne({_id:req.query.setupId,user:user._id}).lean();
+        if (!selectedSetup) return res.sendStatus(404)
+    }
     const now = new Date(),
         today = dayKey(now, user.timezone),
         nySession = nySessionSchedule(now),
@@ -431,6 +445,8 @@ async function dashboard(req, res) {
         rules,
         trades,
         noSetupEntries,
+        setupExamples,
+        selectedSetup,
         pnlTotals,
         todays,
         losses,
@@ -635,6 +651,10 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
             planDeviationReason = String(req.body.planDeviationReason || '').trim(),
             strategy = String(req.body.strategy || '').trim(),
             tradingViewId = req.body.tradingViewUrl === undefined ? '' : tradingViewSnapshotId(req.body.tradingViewUrl);
+        if (req.body.isAPlus !== undefined && req.body.isAPlus !== 'on') {
+            await discardRequestImages(req);
+            return fail(req, 'Invalid A+ setup selection.', '/#journal')
+        }
         if (tradingViewId === null) {
             await discardRequestImages(req);
             return fail(req, 'Enter a valid public TradingView snapshot link.', '/#journal')
@@ -704,7 +724,8 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
                 createdAt,
                 images,
                 tradingViewId,
-                followedPlan
+                followedPlan,
+                isAPlus: req.body.isAPlus === 'on'
             });
         committed = true;
         if (outcome === 'LOSS') state.cooldownUntil = new Date(Date.now() + user.limits.cooldownMinutes * 60000);
@@ -742,6 +763,11 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
             strategy = String(req.body.strategy || '').trim(),
             hasTradingViewUrl = Object.prototype.hasOwnProperty.call(req.body, 'tradingViewUrl'),
             tradingViewId = hasTradingViewUrl ? tradingViewSnapshotId(req.body.tradingViewUrl) : undefined;
+        if ((req.body.aPlusPresent !== undefined && req.body.aPlusPresent !== '1') ||
+            (req.body.isAPlus !== undefined && (req.body.aPlusPresent !== '1' || req.body.isAPlus !== 'on'))) {
+            await discardRequestImages(req);
+            return fail(req, 'Invalid A+ setup selection.', recordReturnTo(req.body))
+        }
         if (tradingViewId === null) {
             await discardRequestImages(req);
             return fail(req, 'Enter a valid public TradingView snapshot link.', recordReturnTo(req.body))
@@ -824,6 +850,7 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
         trade.followedPlan = followedPlan;
         trade.planDeviationReason = followedPlan === false ? planDeviationReason : '';
         trade.notes = String(req.body.notes || '').slice(0, 3000);
+        if (req.body.aPlusPresent === '1') trade.isAPlus = req.body.isAPlus === 'on';
         if (hasTradingViewUrl) trade.tradingViewId = tradingViewId;
         trade.images = [...retainedImages, ...uploadedImages];
         trade.imageId = '';

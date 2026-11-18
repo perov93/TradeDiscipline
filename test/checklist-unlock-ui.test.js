@@ -157,7 +157,7 @@ test('dashboard keeps discipline deadlines separate and reports closed futures m
   const server=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
   const helpers=server.slice(server.indexOf('function dayKey('),server.indexOf('async function stateFor('));
   const dashboardSource=server.slice(server.indexOf('async function dashboard('),server.indexOf('const authLimiter ='));
-  const query=items=>({sort(){return {async lean(){return items}}}});
+  const query=items=>({sort(){return {limit(){return this},async lean(){return items}}}});
   for(const [at,locked,cooldownUntil,expectedReset,expectedDisplay,expectedMarketClosed,expectedOpeningCountdown] of [
     ['2026-11-13T21:24:00Z',true,null,'2026-11-13T22:00:00.000Z','2026-11-15T23:00:00.000Z',false,true],
     ['2026-11-12T21:24:00Z',true,null,'2026-11-12T22:00:00.000Z','2026-11-12T22:00:00.000Z',false,false],
@@ -171,6 +171,7 @@ test('dashboard keeps discipline deadlines separate and reports closed futures m
       Intl,User:{async findById(){return {_id:'user',timezone:'Europe/Sofia',limits:{maxTrades:3,maxLosses:2}}}},
       Rule:{find:()=>query([])},Trade:{find:()=>query([]),async aggregate(){return []}},
       NoSetup:{find:()=>query([])},
+      SetupExample:{find:()=>query([])},
       async stateFor(){return {stopped:locked,checks:[],cooldownUntil:cooldownUntil?new Date(cooldownUntil):null}},
       isChecklistComplete:()=>false
     });

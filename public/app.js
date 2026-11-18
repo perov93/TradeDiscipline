@@ -562,8 +562,8 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
     if(event.defaultPrevented)return;
     event.preventDefault();
     error.hidden=true;
-    const existingCount=form.querySelectorAll('#tradeExistingImage .trade-existing-image').length;
-    const removingCount=form.querySelectorAll('#tradeExistingImage input[name="removeImages"]:checked').length;
+    const existingCount=form.querySelectorAll('#tradeExistingImage .trade-existing-image, [data-existing-images] .trade-existing-image').length;
+    const removingCount=form.querySelectorAll('#tradeExistingImage input[name="removeImages"]:checked, [data-existing-images] input[name="removeImages"]:checked').length;
     if(existingCount-removingCount+input.files.length>10){
       error.textContent='A trade can have up to 10 images. Remove an image before adding another.';
       error.hidden=false;
@@ -600,11 +600,12 @@ const tradeFields={
   strategy:document.getElementById('tradeStrategy'),
   tradingViewUrl:document.getElementById('tradeTradingViewUrl'),
   emotion:document.getElementById('tradeEmotion'),
+  isAPlus:document.getElementById('tradeIsAPlus'),
   followedPlan:document.getElementById('tradeFollowedPlan'),
   planDeviationReason:document.getElementById('tradePlanDeviationReason'),
   notes:document.getElementById('tradeNotes')
 };
-function editTrade(id){
+function editTrade(id,returnTo='calendar'){
   const trade=tradesById.get(id);
   if(!trade)throw new Error(`Trade record ${id} is not available for editing.`);
   tradeEditor.action='/trades/'+encodeURIComponent(id)+'/edit';
@@ -620,10 +621,12 @@ function editTrade(id){
   tradeFields.currency.value=trade.currency||'USD';
   tradeFields.strategy.value=trade.strategy||'';
   tradeFields.emotion.value=trade.emotion||'calm';
+  tradeFields.isAPlus.checked=trade.isAPlus===true;
   tradeFields.followedPlan.value=trade.followedPlan===true?'yes':trade.followedPlan===false?'no':'unknown';
   tradeFields.planDeviationReason.value=trade.planDeviationReason||'';
   updatePlanDeviation(tradeEditor);
-  document.getElementById('tradeReturnDate').value=selectedCalendarDate||trade.date;
+  document.getElementById('tradeReturnTo').value=returnTo;
+  document.getElementById('tradeReturnDate').value=returnTo==='setups'?trade.date:selectedCalendarDate||trade.date;
   tradeFields.notes.value=trade.notes||'';
   tradeFields.tradingViewUrl.value=trade.tradingViewId?`https://www.tradingview.com/x/${trade.tradingViewId}/`:'';
   tradeEditor.updateTradingViewPreview();
@@ -662,7 +665,7 @@ function editTrade(id){
   tradeDialog.showModal();
   tradeFields.instrument.focus();
 }
-document.querySelectorAll('.trade-edit-trigger').forEach(button=>button.addEventListener('click',()=>editTrade(button.dataset.tradeId)));
+document.querySelectorAll('.trade-edit-trigger').forEach(button=>button.addEventListener('click',()=>editTrade(button.dataset.tradeId,button.dataset.returnTo||'calendar')));
 tradeDialog.addEventListener('click',event=>{if(event.target===tradeDialog)tradeDialog.close()});
 imageDialog.addEventListener('click',event=>{if(event.target===imageDialog)imageDialog.close()});
 tradeFields.currency.addEventListener('input',()=>{tradeFields.currency.value=tradeFields.currency.value.toUpperCase()});
@@ -1351,6 +1354,7 @@ function showDay(date,items){
     meta.append(strategy);
     record.append(meta);
     const chips=make('div','record-chips');
+    if(trade.isAPlus)chips.append(make('span','record-chip record-chip-good','A+ SETUP'));
     const emotion=trade.emotion||'calm';
     chips.append(make('span',`record-chip ${emotion==='calm'?'':'record-chip-warn'}`,emotion.toUpperCase()));
     const planStatus=trade.followedPlan===true?'PLAN FOLLOWED':trade.followedPlan===false?'PLAN BROKEN':'PLAN STATUS UNKNOWN';

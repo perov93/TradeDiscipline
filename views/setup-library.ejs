@@ -1,0 +1,94 @@
+<!doctype html>
+<%
+  const fmtPnl=(n,c)=>{
+    const value=Number(n)||0;
+    return (value>0?'+':value<0?'−':'')+Math.abs(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' '+(c||'USD');
+  };
+  const pnlClass=n=>(Number(n)||0)>0?'pnl-pos':(Number(n)||0)<0?'pnl-neg':'';
+  const dateFilterLabel=filters.from ? (filters.to && filters.to!==filters.from ? filters.from+' – '+filters.to : filters.from) : 'All save dates';
+  const dateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',weekday:'short',day:'numeric',month:'short',year:'numeric'});
+  const days=new Map();
+  items.forEach(item=>{
+    const date=dayKey(item.record.createdAt,user.timezone);
+    if(!days.has(date))days.set(date,[]);
+    days.get(date).push(item);
+  });
+%>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#060608">
+    <title>A+ Setup Library / DISCIPLINE</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
+    <link rel="stylesheet" href="/style.css?v=20261117-11">
+  </head>
+  <body>
+    <main class="app setup-library-page">
+      <header class="top">
+        <div class="brand">
+          <div class="brandmark">D<span>.</span></div>
+          <div><div class="eyebrow">TRADING DISCIPLINE</div><div class="brandline">MY RULES. MY EDGE.</div></div>
+        </div>
+        <a class="ghost" href="/#setups">← DASHBOARD</a>
+      </header>
+      <div class="setup-library-intro">
+        <p class="eyebrow">YOUR TRADING PLAYBOOK</p>
+        <h1>A+ SETUP LIBRARY</h1>
+        <p>Review saved examples and the journal trades you marked A+.</p>
+      </div>
+      <section class="panel setup-library-filters" aria-label="Find a setup">
+        <form method="get" action="/setup-library" class="journal-form">
+          <input aria-label="Search name, instrument, strategy, account or notes" name="search" maxlength="120" value="<%= filters.search %>" type="search" placeholder="Search name, instrument, strategy, account">
+            <select aria-label="Record type" name="type">
+              <% [['all','All records'],['example','Saved examples'],['trade','Journal trades']].forEach(([value,label])=>{ %>
+                <option value="<%= value %>" <%= filters.type===value?'selected':'' %>><%= label %></option>
+              <% }) %>
+            </select>
+            <input aria-label="Strategy" name="strategy" maxlength="120" value="<%= filters.strategy %>" placeholder="Any strategy">
+            <input aria-label="Instrument" name="instrument" maxlength="40" value="<%= filters.instrument %>" placeholder="Any instrument">
+            <select aria-label="Outcome" name="outcome">
+              <% [['all','All outcomes'],['WIN','Win'],['LOSS','Loss'],['BREAKEVEN','Breakeven']].forEach(([value,label])=>{ %>
+                <option value="<%= value %>" <%= filters.outcome===value?'selected':'' %>><%= label %></option>
+              <% }) %>
+            </select>
+          <details class="setup-library-date-picker">
+            <summary aria-label="Save dates: <%= dateFilterLabel %>" title="Save dates: <%= dateFilterLabel %>"><%= dateFilterLabel %></summary>
+            <div class="setup-library-dates">
+              <label>FROM<input type="date" name="from" value="<%= filters.from %>"></label>
+              <label>TO (OPTIONAL)<input type="date" name="to" value="<%= filters.to %>"></label>
+              <span>Choose a From date for one day, or add a To date for a period. Save dates use <%= user.timezone %>.</span>
+              <button class="primary" type="submit">APPLY DATES</button>
+            </div>
+          </details>
+          <button class="primary" type="submit">APPLY</button>
+          <a class="ghost" href="/setup-library">CLEAR</a>
+        </form>
+      </section>
+      <section class="setup-library-results setup-card-list" aria-labelledby="libraryResultsTitle">
+        <div class="section-heading"><span id="libraryResultsTitle">A+ SETUPS</span><span class="tag"><%= total %> RECORDS</span></div>
+        <p class="micro setup-library-results-hint"><%= items.length %> on this page · Grouped by save date, not setup date · Times in <%= user.timezone %></p>
+        <% if(!items.length){ %>
+          <div class="recent-setups-empty"><strong>NO MATCHING SETUPS</strong><p>No setups match these filters.</p><a href="/setup-library">CLEAR FILTERS</a></div>
+        <% }else{ %>
+          <div class="setup-library-table">
+          <div class="setup-library-table-head" aria-hidden="true"><span>TIME</span><span>SETUP</span><span>SIDE</span><span>INSTR.</span><span>SESSION</span><span>STRATEGY</span><span>RESULT</span><span>P&amp;L</span><span></span></div>
+          <% days.forEach((group,date)=>{ %>
+            <div class="recent-trade-group">
+              <div class="recent-trade-day"><span><%= dateFormat.format(new Date(`${date}T00:00:00Z`)).toUpperCase() %></span></div>
+              <% group.forEach(item=>{ %>
+                <%- include('setup-record',{item,date,fmtPnl,pnlClass,libraryPage:true}) %>
+              <% }) %>
+            </div>
+          <% }) %>
+          </div>
+        <% } %>
+        <nav class="setup-library-pagination" aria-label="Library pages">
+          <% if(page>1){ %><a class="ghost" href="<%= pageUrl(page-1) %>">← PREVIOUS</a><% } %>
+          <span>PAGE <%= page %> OF <%= pages %></span>
+          <% if(page<pages){ %><a class="ghost" href="<%= pageUrl(page+1) %>">NEXT →</a><% } %>
+        </nav>
+      </section>
+    </main>
+  </body>
+</html>

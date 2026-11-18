@@ -36,6 +36,19 @@
     addTradeTotal(recentTradeTotals,t);
   });
   const recentDayFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',weekday:'short',day:'numeric',month:'short'});
+  const setupLibrary=[
+    ...(typeof setupExamples==='undefined'?[]:setupExamples).map(record=>({record,isJournal:false})),
+    ...trades.filter(record=>record.isAPlus===true).map(record=>({record,isJournal:true}))
+  ].sort((a,b)=>new Date(b.record.createdAt)-new Date(a.record.createdAt)).slice(0,5);
+  if(typeof selectedSetup!=='undefined' && selectedSetup && !setupLibrary.some(item=>!item.isJournal&&String(item.record._id)===String(selectedSetup._id))){
+    setupLibrary.unshift({record:selectedSetup,isJournal:false});
+  }
+  const setupDays=new Map();
+  setupLibrary.forEach(item=>{
+    const date=dayKey(item.record.createdAt,user.timezone);
+    if(!setupDays.has(date))setupDays.set(date,[]);
+    setupDays.get(date).push(item);
+  });
   const recapDateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'numeric',month:'short'});
   const activeRulesCount=rules.filter(r=>r.active).length;
   const checkedActive=active.filter(r=>checks.includes(String(r._id))).length;
@@ -76,8 +89,8 @@
     <meta name="theme-color" content="#060608">
     <title>DISCIPLINE / My Rules. My Edge.</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
-    <link rel="stylesheet" href="/style.css?v=20261114-15">
-    <script src="/app.js?v=20261114-11" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20261117-8">
+    <script src="/app.js?v=20261117-1" defer></script>
     <script src="/calendar-ui.js?v=2" defer></script>
   </head>
   <body>
@@ -106,6 +119,7 @@
       <nav class="dashboard-tabs" role="tablist" aria-label="Dashboard sections">
         <a id="tab-trading" role="tab" aria-selected="true" href="#trading" data-tab-target="trading">TRADE</a>
         <a id="tab-journal" role="tab" aria-selected="false" href="#journal" data-tab-target="journal">JOURNAL</a>
+        <a id="tab-setups" role="tab" aria-selected="false" href="#setups" data-tab-target="setups">A+ SETUPS</a>
         <a id="tab-calendar" role="tab" aria-selected="false" href="#calendar" data-tab-target="calendar">CALENDAR</a>
         <a id="tab-rules" role="tab" aria-selected="false" href="#rules" data-tab-target="rules">RULES</a>
         <a id="tab-settings" role="tab" aria-selected="false" href="#settings" data-tab-target="settings">SETTINGS</a>
@@ -591,6 +605,7 @@
             <p class="micro outcome-pnl-warning" data-outcome-pnl-warning role="status" hidden></p>
             <label>CURRENCY CODE<input name="currency" maxlength="3" minlength="3" pattern="[A-Za-z]{3}" value="<%= preferences.defaultCurrency %>" required autocomplete="off" placeholder="USD"></label>
             <label>STRATEGY<input name="strategy" maxlength="120" placeholder="e.g. NY open breakout, pullback"></label>
+            <label class="inline-check"><input type="checkbox" name="isAPlus"> MARK AS A+ SETUP</label>
             <label>EMOTION
               <select name="emotion">
                 <option value="calm">Calm</option>
@@ -657,6 +672,7 @@
                     <span class="recent-trade-time"><%= t.tradeTime || timeKey(t.createdAt,user.timezone) %></span>
                     <span class="recent-trade-name">
                       <%= t.instrument || 'Trade' %><% if(t.side){ %><span class="recent-trade-side <%= t.side==='SELL'?'pnl-neg':'pnl-pos' %>"><%= t.side %></span><% } %>
+                      <% if(t.isAPlus){ %><span class="recent-trade-side">A+</span><% } %>
                       <% if(t.followedPlan===false){ %><span class="recent-trade-sub pnl-neg">Plan broken</span><% }else if(t.strategy){ %><span class="recent-trade-sub"><%= t.strategy %></span><% } %>
                     </span>
                     <span class="recent-trade-amount <%= pnlClass(t.pnl) %>"><%= fmtPnl(t.pnl,t.currency) %></span>
@@ -697,6 +713,33 @@
             <% } %>
           </div>
         </section>
+        </div>
+      </section>
+
+      <section class="dashboard-tabpanel" id="setups" role="tabpanel" aria-labelledby="tab-setups" hidden>
+        <div class="journal-grid">
+          <section class="panel">
+            <div class="section-heading"><span>A+ SETUP EXAMPLES</span></div>
+            <p class="muted small">Save examples, including backtests, separately from your journal. Examples do not affect limits, cooldown, calendar, statistics, or export. Journal trades marked A+ also appear in the library.</p>
+            <%- include('setup-form', {setup:null,preferences}) %>
+          </section>
+          <section class="panel recent-trades recent-setups setup-card-list" aria-labelledby="recentSetupsTitle">
+            <div class="section-heading"><span id="recentSetupsTitle">RECENT A+ SETUPS</span><span class="tag"><%= setupLibrary.length %> SHOWN</span></div>
+            <p class="micro recent-setups-hint">Grouped by save date · Times in <%= user.timezone %></p>
+            <% if (!setupLibrary.length) { %>
+              <p class="empty">No setup examples or A+ trades yet.</p>
+            <% } else { %>
+              <% setupDays.forEach((items,date)=>{ %>
+                <div class="recent-trade-group">
+                  <div class="recent-trade-day"><span><%= recentDayFormat.format(new Date(`${date}T00:00:00Z`)).toUpperCase() %></span></div>
+                  <% items.forEach(item=>{ %>
+                    <%- include('setup-record', {item,date,preferences,fmtPnl,pnlClass}) %>
+                  <% }) %>
+                </div>
+              <% }) %>
+            <% } %>
+            <a class="recent-trades-more" href="/setup-library">VIEW ALL A+ SETUPS →</a>
+          </section>
         </div>
       </section>
 
@@ -752,6 +795,8 @@
           <p class="micro outcome-pnl-warning" data-outcome-pnl-warning role="status" hidden></p>
           <label>CURRENCY CODE<input name="currency" id="tradeCurrency" maxlength="3" minlength="3" pattern="[A-Za-z]{3}" required autocomplete="off"></label>
           <label>STRATEGY<input name="strategy" id="tradeStrategy" maxlength="120" placeholder="e.g. NY open breakout, pullback"></label>
+          <input type="hidden" name="aPlusPresent" value="1">
+          <label class="inline-check"><input type="checkbox" name="isAPlus" id="tradeIsAPlus"> MARK AS A+ SETUP</label>
           <label>EMOTION
             <select name="emotion" id="tradeEmotion">
               <option value="calm">Calm</option>
@@ -1069,7 +1114,7 @@
               <legend>DASHBOARD</legend>
               <label>DEFAULT TAB
                 <select name="defaultTab">
-                  <% [['trading','Trade'],['journal','Journal'],['calendar','Calendar'],['rules','Rules'],['settings','Settings']].forEach(([value,label])=>{ %>
+                  <% [['trading','Trade'],['journal','Journal'],['setups','A+ Setups'],['calendar','Calendar'],['rules','Rules'],['settings','Settings']].forEach(([value,label])=>{ %>
                     <option value="<%= value %>" <%= preferences.defaultTab===value?'selected':'' %>><%= label %></option>
                   <% }) %>
                 </select>
@@ -1129,7 +1174,7 @@
         <span>Personal discipline tool, not a broker-level trading lock.</span>
       </footer>
     </main>
-    <script id="trade-data" type="application/json"><%- JSON.stringify(trades.map(t => ({id: String(t._id), date: dayKey(t.createdAt, user.timezone), createdAt: t.createdAt.toISOString(), tradeTime: t.tradeTime || timeKey(t.createdAt, user.timezone), account: t.account || '', accountCount: Number(t.accountCount)||1, session: t.session || '', checklistCompleted: t.checklistCompleted ?? null, planDeviationReason: t.planDeviationReason || '', instrument: t.instrument, side: t.side, strategy: t.strategy || '', outcome: t.outcome, pnl: t.pnl, currency: t.currency || 'USD', emotion: t.emotion, followedPlan: t.followedPlan ?? null, notes: t.notes, tradingViewId: t.tradingViewId || '', images: t.images && t.images.length ? t.images.map(image => image.id) : (t.imageId ? [t.imageId] : [])}))).replace(/</g, '\\u003c') %></script>
+    <script id="trade-data" type="application/json"><%- JSON.stringify(trades.map(t => ({id: String(t._id), date: dayKey(t.createdAt, user.timezone), createdAt: t.createdAt.toISOString(), tradeTime: t.tradeTime || timeKey(t.createdAt, user.timezone), account: t.account || '', accountCount: Number(t.accountCount)||1, session: t.session || '', checklistCompleted: t.checklistCompleted ?? null, planDeviationReason: t.planDeviationReason || '', instrument: t.instrument, side: t.side, strategy: t.strategy || '', outcome: t.outcome, pnl: t.pnl, currency: t.currency || 'USD', emotion: t.emotion, followedPlan: t.followedPlan ?? null, isAPlus: t.isAPlus === true, notes: t.notes, tradingViewId: t.tradingViewId || '', images: t.images && t.images.length ? t.images.map(image => image.id) : (t.imageId ? [t.imageId] : [])}))).replace(/</g, '\\u003c') %></script>
     <script id="no-setup-data" type="application/json"><%- JSON.stringify(noSetupRecords.map(entry => ({id:String(entry._id),date:entry.date,notes:entry.notes}))).replace(/</g, '\\u003c') %></script>
   </body>
 </html>

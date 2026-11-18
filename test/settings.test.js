@@ -146,6 +146,7 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
     preferences:{defaultCurrency:'EUR',calendarCurrency:'GBP',defaultTab:'calendar',analysisRange:'30d',showWorldClocks:false,showForexHours:false,showNyReminder:false,showEconomicCalendar:false}
   });
   const locals={
+    filename:path.join(__dirname,'..','views','dashboard.ejs'),
     user,csrf:'test-token',me:{name:user.name},error:null,success:'Saved',
     preferencesFor,settingsTimezones:TIMEZONES,settingsCurrencies:CURRENCIES,sessionChoices:SESSION_CHOICES,
     state:{checks:[],cooldownUntil:null,stopped:false},rules:[],trades:[],pnlTotals:[],
@@ -156,6 +157,35 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   };
   const template=fs.readFileSync(path.join(__dirname,'..','views','dashboard.ejs'),'utf8');
   let html=ejs.render(template,locals);
+  assert.match(html,/id="tab-setups"/);
+  assert.match(html,/No setup examples or A\+ trades yet/);
+  const withSetup=ejs.render(template,{...locals,setupExamples:[{_id:'1',title:'Example',createdAt:new Date('2026-11-10T09:30:00Z'),outcome:'WIN',currency:'USD',pnl:10,tradeTime:'09:30',session:'New York',accountCount:1,followedPlan:true,images:[]}]});
+  assert.match(withSetup,/action="\/setups\/1\/edit"/);
+  assert.match(withSetup,/SAVED EXAMPLE/);
+  const marked={_id:'2',createdAt:new Date('2026-11-10T10:00:00Z'),instrument:'ES',outcome:'WIN',currency:'USD',pnl:20,isAPlus:true,notes:'<script>',tradingViewId:'AbCd1234',images:[{id:'00000000-0000-0000-0000-000000000000'}]};
+  const unmarked={...marked,_id:'3',instrument:'Unmarked',isAPlus:false};
+  const library=ejs.render(template,{...locals,trades:[marked,unmarked],setupExamples:[{_id:'1',title:'Example',createdAt:new Date('2026-11-10T09:30:00Z'),outcome:'WIN',currency:'USD',pnl:10,tradeTime:'09:30',session:'New York',accountCount:1,followedPlan:true,images:[]}]});
+  const librarySection=library.slice(library.indexOf('id="setups"'),library.indexOf('<dialog id="tradeDialog"'));
+  assert.match(librarySection,/JOURNAL TRADE/);
+  assert.match(librarySection,/setup-record-outcome-win">WIN<\/span>/);
+  assert.match(librarySection,/class="setup-record-chevron" aria-hidden="true"/);
+  assert.match(librarySection,/class="recent-trades-more" href="\/setup-library"/);
+  assert.doesNotMatch(librarySection,/NET P&amp;L/);
+  assert.match(librarySection,/2 SHOWN/);
+  assert.match(librarySection,/data-trade-id="2" data-return-to="setups"/);
+  assert.match(librarySection,/\/trades\/2\/images\/00000000-0000-0000-0000-000000000000/);
+  assert.match(librarySection,/data-trading-view-id="AbCd1234"/);
+  assert.match(librarySection,/&lt;script&gt;/);
+  assert.doesNotMatch(librarySection,/Unmarked/);
+  assert.ok(librarySection.indexOf('JOURNAL TRADE')<librarySection.indexOf('SAVED EXAMPLE'));
+  const selected={_id:'old',title:'Older example',createdAt:new Date('2020-01-01T00:00:00Z'),outcome:'WIN',currency:'USD',pnl:0,session:'New York',accountCount:1,followedPlan:true,images:[]};
+  const many=Array.from({length:6},(_,i)=>({...marked,_id:`trade-${i}`,createdAt:new Date(`2026-11-${String(i+10).padStart(2,'0')}T10:00:00Z`)}));
+  const selectedHtml=ejs.render(template,{...locals,trades:many,setupExamples:[],selectedSetup:selected});
+  const selectedSection=selectedHtml.slice(selectedHtml.indexOf('id="setups"'),selectedHtml.indexOf('<dialog id="tradeDialog"'));
+  assert.match(selectedSection,/<details class="setup-record" open>/);
+  assert.match(selectedSection,/action="\/setups\/old\/edit"/);
+  assert.equal((selectedSection.match(/<details class="setup-record"/g)||[]).length,6);
+  assert.match(selectedSection,/href="\/setup-library"/);
   assert.match(html,/<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg\?v=1">/);
   assert.match(html,/data-default-tab="calendar"/);
   assert.match(html,/data-default-currency="GBP" data-analysis-range="30d"/);

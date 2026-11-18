@@ -1,0 +1,93 @@
+<% const record=item.record, isJournal=item.isJournal, standalone=typeof libraryPage!=='undefined' && libraryPage;
+   const images=record.images && record.images.length ? record.images : (record.imageId ? [{id:record.imageId}] : []);
+   const imageRoot=isJournal?'/trades/':'/setups/';
+   const outcomeTone=record.outcome==='WIN'?'win':record.outcome==='LOSS'?'loss':'even'; %>
+<details class="setup-record" <%= typeof selectedSetup!=='undefined' && selectedSetup && !isJournal && String(selectedSetup._id)===String(record._id)?'open':'' %>>
+  <summary class="recent-trade-row">
+    <span class="recent-trade-time"><%= record.tradeTime || timeKey(record.createdAt,user.timezone) %></span>
+    <span class="recent-trade-name">
+      <%= isJournal ? (record.instrument || 'Trade') : record.title %>
+      <% if(record.side){ %><span class="recent-trade-side <%= record.side==='SELL'?'pnl-neg':'pnl-pos' %>"><%= record.side %></span><% } %>
+      <span class="recent-trade-sub"><%= record.strategy ? record.strategy+' · ' : '' %><%= isJournal?'JOURNAL TRADE':'SAVED EXAMPLE' %></span>
+    </span>
+    <% if(standalone){ %>
+      <span class="setup-library-side <%= record.side==='SELL'?'pnl-neg':record.side==='BUY'?'pnl-pos':'' %>" aria-label="Side: <%= record.side || 'not recorded' %>"><%= record.side || '—' %></span>
+      <span class="setup-library-instrument" aria-label="Instrument: <%= record.instrument || 'not recorded' %>"><%= record.instrument || '—' %></span>
+      <span class="setup-library-session" aria-label="Session: <%= record.session || 'not recorded' %>"><%= record.session || '—' %></span>
+      <span class="setup-library-strategy" aria-label="Strategy: <%= record.strategy || 'not recorded' %>"><%= record.strategy || '—' %></span>
+      <span class="setup-record-outcome setup-record-outcome-<%= outcomeTone %>"><%= record.outcome %></span>
+      <span class="recent-trade-amount <%= pnlClass(record.pnl) %>" <% if(record.pnl == null && !isJournal){ %>aria-label="P&amp;L not recorded"<% } %>><%= record.pnl == null && !isJournal ? '—' : fmtPnl(record.pnl,record.currency) %></span>
+      <span class="setup-record-chevron" aria-hidden="true">⌄</span>
+    <% }else{ %>
+      <span class="setup-record-trailing">
+        <span class="setup-record-result">
+          <% if(record.pnl != null || isJournal){ %><span class="recent-trade-amount <%= pnlClass(record.pnl) %>"><%= fmtPnl(record.pnl,record.currency) %></span><% } %>
+          <span class="setup-record-outcome setup-record-outcome-<%= outcomeTone %>"><%= record.outcome %></span>
+        </span>
+        <span class="setup-record-chevron" aria-hidden="true">⌄</span>
+      </span>
+    <% } %>
+  </summary>
+  <div class="setup-record-detail">
+    <div class="setup-record-info">
+    <div class="record-chips">
+      <span class="record-chip <%= outcomeTone==='win'?'record-chip-good':outcomeTone==='loss'?'record-chip-bad':'' %>"><%= record.outcome %></span>
+      <span class="record-chip"><%= record.instrument || 'Instrument not specified' %></span>
+      <% if(record.side){ %><span class="record-chip <%= record.side==='SELL'?'record-chip-bad':'record-chip-good' %>"><%= record.side %></span><% } %>
+      <span class="record-chip"><%= record.session || 'Session not recorded' %></span>
+      <% if(record.account){ %><span class="record-chip"><%= record.account %></span><% } %>
+      <% if(isJournal || record.accountCount != null){ %><span class="record-chip"><%= record.accountCount || 1 %> account(s)</span><% } %>
+      <span class="record-chip"><%= record.currency || 'USD' %></span>
+    </div>
+    <% if(isJournal || record.emotion != null || typeof record.followedPlan==='boolean'){ %>
+      <p><%= record.emotion || 'Emotion not recorded' %> · <%= record.followedPlan===true?'Plan followed':record.followedPlan===false?'Plan broken':'Plan status unknown' %></p>
+    <% } %>
+    <% if(record.planDeviationReason){ %><p>Plan deviation: <%= record.planDeviationReason %></p><% } %>
+    <% if(record.notes){ %>
+      <div class="record-note setup-record-note">
+        <span class="record-label">LESSON / NOTES</span>
+        <p><%= record.notes %></p>
+      </div>
+    <% } %>
+    </div>
+    <div class="record-images">
+      <% images.forEach((image,index)=>{ const src=imageRoot+record._id+'/images/'+image.id; %>
+        <% if(standalone){ %>
+          <a class="image-preview-trigger" href="<%= src %>" target="_blank" rel="noopener noreferrer" aria-label="Open image <%= index+1 %> in a new tab"><img src="<%= src %>" alt="Record image <%= index+1 %>" loading="lazy"></a>
+        <% }else{ %>
+          <button type="button" class="image-preview-trigger" data-image-src="<%= src %>" aria-label="Preview image <%= index+1 %>"><img src="<%= src %>" alt="Record image <%= index+1 %>" loading="lazy"></button>
+        <% } %>
+      <% }) %>
+      <% if(record.tradingViewId && /^[a-z0-9]{8}$/i.test(record.tradingViewId)){ const snapshot='https://s3.tradingview.com/snapshots/'+record.tradingViewId[0].toLowerCase()+'/'+record.tradingViewId+'.png'; %>
+        <% if(standalone){ %>
+          <a class="image-preview-trigger" href="https://www.tradingview.com/x/<%= record.tradingViewId %>/" target="_blank" rel="noopener noreferrer" aria-label="Open TradingView snapshot in a new tab"><img src="<%= snapshot %>" alt="TradingView snapshot" loading="lazy"></a>
+        <% }else{ %>
+          <button type="button" class="image-preview-trigger" data-image-src="<%= snapshot %>" data-trading-view-id="<%= record.tradingViewId %>" aria-label="Preview TradingView snapshot"><img src="<%= snapshot %>" alt="TradingView snapshot" loading="lazy"></button>
+        <% } %>
+      <% } %>
+    </div>
+    <% if(standalone){ %>
+      <div class="journal-actions">
+        <% if(isJournal){ %>
+          <a class="textbutton" href="/?calendarDate=<%= encodeURIComponent(date) %>#calendar">OPEN TRADE IN CALENDAR</a>
+        <% }else{ %>
+          <a class="textbutton" href="/?setupId=<%= encodeURIComponent(String(record._id)) %>#setups">EDIT OR DELETE EXAMPLE</a>
+        <% } %>
+      </div>
+    <% }else if(isJournal){ %>
+      <div class="journal-actions">
+        <button type="button" class="textbutton trade-edit-trigger" data-trade-id="<%= record._id %>" data-return-to="setups">EDIT TRADE</button>
+        <a class="textbutton" href="/?calendarDate=<%= encodeURIComponent(date) %>#calendar">OPEN IN CALENDAR</a>
+      </div>
+    <% }else{ %>
+      <details <%= typeof selectedSetup!=='undefined' && selectedSetup && String(selectedSetup._id)===String(record._id)?'open':'' %>>
+        <summary>EDIT EXAMPLE</summary>
+        <%- include('setup-form', {setup:record,preferences}) %>
+      </details>
+      <form method="post" action="/setups/<%= record._id %>/delete" data-confirm="Delete this setup example?">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <button type="submit" class="textbutton danger-text">DELETE EXAMPLE</button>
+      </form>
+    <% } %>
+  </div>
+</details>
