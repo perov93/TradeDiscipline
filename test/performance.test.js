@@ -102,3 +102,95 @@ test('rendered cards filter currencies and expose every requested statistic with
   }
   assert.match(nodes.performanceStatsCaption.textContent,/USD/);
 });
+test('account selection scopes analysis metrics, charts and strategy records without splitting P&L',()=>{
+  function element(){
+    return {
+      children:[],textContent:'',value:'',style:{},attributes:{},dataset:{},classList:{add(){},toggle(){}},
+      append(...children){this.children.push(...children)},
+      replaceChildren(){this.children=[]},setAttribute(name,value){this.attributes[name]=value}
+    };
+  }
+  const nodes=Object.fromEntries([
+    'performanceStats','performanceStatsCaption','currentWinStreak','currentLossStreak',
+    'bestWinStreak','worstLossStreak'
+  ].map(id=>[id,element()]));
+  const items=[
+    {...trade('1','2026-01-02',150),account:' Apex ',accountCount:5,followedPlan:true},
+    {...trade('2','2026-01-03',-30,'LOSS'),account:'Apex',accountCount:15,followedPlan:false},
+    {...trade('3','2026-01-04',900),account:'Personal'},
+    {...trade('4','2026-01-05',20),account:'Unassigned'},
+    {...trade('5','2026-01-06',-5,'LOSS'),account:'   '},
+    trade('6','2026-01-07',10),
+    {...trade('7','2025-12-01',50),account:'Apex'},
+    {...trade('8','2026-01-08',80,'WIN','EUR'),account:'Apex'}
+  ];
+  const renderer=vm.createContext({
+    document:{getElementById:id=>nodes[id],createElement:()=>element()},
+    trades:items,noSetupEntries:[{date:'2026-01-01'}],
+    allAnalysisAccountKeys:new Set(['account:Apex','account:Personal','account:Unassigned','unassigned']),
+    analysisAccountLabels:new Map([['account:Apex','Apex'],['account:Personal','Personal'],['account:Unassigned','Unassigned'],['unassigned','Unassigned']]),
+    selectedAnalysisAccounts:new Set(['account:Apex']),analysisCurrency:element(),
+    analysisNoSetupCount:element(),analysisTradeCount:element(),analysisWinRate:element(),
+    analysisPlanRate:element(),analysisNetPnl:element(),analysisPeriodLabel:element(),
+    outcomeBreakdown:element(),dailyBars:element(),dailyAnalysisCaption:element(),
+    analysisRange:'month',selectedAnalysisCurrency:'USD',analysisRangeButtons:[],
+    current:new Date(2026,0,1),title:{textContent:'January 2026'},
+    formatPnl:(value,currency)=>`${currency} ${Number(value).toFixed(2)}`,
+    currencyTotals:records=>records.reduce((totals,record)=>
+      totals.set(record.currency,(totals.get(record.currency)||0)+record.pnl),new Map()),
+    renderEquityChart(records,currency){renderer.chart={records,currency}},
+    renderStrategyAnalysis(records,label,allRecords){renderer.strategy={records,label,allRecords}}
+  });
+  vm.runInContext(source.slice(source.indexOf('function getAccountRecords('),source.indexOf('function appendSvg(')),renderer);
+  vm.runInContext(source.slice(source.indexOf('function calculatePerformanceStats('),source.indexOf('function showStrategyTrades(')),renderer);
+  vm.runInContext(source.slice(source.indexOf('function renderAnalysis('),source.indexOf('function showDay(')),renderer);
+  const value=label=>nodes.performanceStats.children.flatMap(group=>group.children[1].children)
+    .find(card=>card.children[0].textContent===label).children[1].textContent;
+  const ids=records=>Array.from(records,record=>record.id);
+  renderer.renderAnalysis();
+  assert.equal(value('NET PROFIT'),'USD 120.00');
+  assert.equal(value('TRADES'),'2');
+  assert.equal(renderer.analysisTradeCount.textContent,'3');
+  assert.equal(renderer.analysisWinRate.textContent,'67%');
+  assert.equal(renderer.analysisPlanRate.textContent,'50%');
+  assert.equal(nodes.currentLossStreak.textContent,'0');
+  assert.equal(nodes.worstLossStreak.textContent,'1');
+  assert.deepEqual(ids(renderer.chart.records),['1','2','8']);
+  assert.equal(renderer.chart.currency,'USD');
+  assert.deepEqual(ids(renderer.strategy.allRecords),['1','2','7','8']);
+  assert.match(renderer.strategy.label,/January 2026 · Apex/);
+  assert.equal(renderer.dailyBars.children.length,3);
+  assert.equal(renderer.analysisNoSetupCount.textContent,'1');
+
+  renderer.selectedAnalysisAccounts=new Set(['account:Apex','account:Personal']);
+  renderer.renderAnalysis();
+  assert.deepEqual(ids(renderer.chart.records),['1','2','3','8']);
+  assert.equal(renderer.analysisTradeCount.textContent,'4');
+  assert.match(renderer.strategy.label,/January 2026 · 2 accounts/);
+
+  renderer.analysisRange='all';
+  renderer.selectedAnalysisAccounts=new Set(['account:Apex']);
+  renderer.renderAnalysis();
+  assert.equal(value('NET PROFIT'),'USD 170.00');
+  renderer.selectedAnalysisAccounts=new Set(['unassigned']);
+  renderer.renderAnalysis();
+  assert.deepEqual(ids(renderer.chart.records),['5','6']);
+  assert.equal(value('NET PROFIT'),'USD 5.00');
+  renderer.selectedAnalysisAccounts=new Set(['account:Unassigned']);
+  renderer.renderAnalysis();
+  assert.deepEqual(ids(renderer.chart.records),['4']);
+  renderer.selectedAnalysisAccounts=new Set(['account:Personal']);
+  renderer.analysisRange='day';
+  renderer.selectedCalendarDate='2026-01-02';
+  renderer.renderAnalysis();
+  assert.equal(value('TRADES'),'0');
+  assert.equal(value('NET PROFIT'),'—');
+  assert.equal(renderer.analysisCurrency.attributes['aria-disabled'],'true');
+  renderer.selectedAnalysisAccounts=new Set(renderer.allAnalysisAccountKeys);
+  renderer.analysisRange='all';
+  renderer.selectedAnalysisCurrency='USD';
+  renderer.renderAnalysis();
+  assert.equal(renderer.analysisTradeCount.textContent,'8');
+  assert.equal(value('NET PROFIT'),'USD 1095.00');
+  assert.equal(renderer.analysisNoSetupCount.textContent,'1');
+});

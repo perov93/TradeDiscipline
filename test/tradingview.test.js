@@ -37,7 +37,7 @@ test('trade records persist a validated snapshot ID without affecting legacy rec
 
 test('browser snapshot preview only derives images from valid TradingView links',()=>{
   const source=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
-  const block=source.slice(source.indexOf('function tradingViewSnapshotId'),source.indexOf("document.querySelectorAll('.image-preview-trigger')"));
+  const block=source.slice(source.indexOf('function tradingViewSnapshotId'),source.indexOf("document.querySelectorAll('[data-image-upload]')"));
   const {tradingViewSnapshotId,tradingViewSnapshotImageUrl}=vm.runInNewContext(
     `${block}\n({tradingViewSnapshotId,tradingViewSnapshotImageUrl})`,{URL}
   );

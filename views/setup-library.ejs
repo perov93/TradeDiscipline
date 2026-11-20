@@ -21,7 +21,10 @@
     <meta name="theme-color" content="#060608">
     <title>A+ Setup Library / DISCIPLINE</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
-    <link rel="stylesheet" href="/style.css?v=20261117-11">
+    <link rel="stylesheet" href="/style.css?v=20261120-1">
+    <script src="/image-preview.js?v=1" defer></script>
+    <script src="/video-preview.js?v=1" defer></script>
+    <script src="/setup-library-ui.js?v=4" defer></script>
   </head>
   <body>
     <main class="app setup-library-page">
@@ -37,6 +40,7 @@
         <h1>A+ SETUP LIBRARY</h1>
         <p>Review saved examples and the journal trades you marked A+.</p>
       </div>
+      <% if(success){ %><p class="notice success" role="status"><%= success %></p><% } %>
       <section class="panel setup-library-filters" aria-label="Find a setup">
         <form method="get" action="/setup-library" class="journal-form">
           <input aria-label="Search name, instrument, strategy, account or notes" name="search" maxlength="120" value="<%= filters.search %>" type="search" placeholder="Search name, instrument, strategy, account">
@@ -89,6 +93,10 @@
           <% if(page<pages){ %><a class="ghost" href="<%= pageUrl(page+1) %>">NEXT →</a><% } %>
         </nav>
       </section>
+      <% if(items.some(item=>!item.isJournal)){ %>
+        <%- include('delete-dialog',{deleteReturnTo:'setup-library'}) %>
+      <% } %>
+      <%- include('image-preview-dialog') %>
     </main>
   </body>
 </html>

@@ -15,8 +15,8 @@ test('A+ markers persist on creation and editing without copying or changing tra
   const state={checks:['rule'],checkTime:new Date(),cooldownUntil:null,async save(){stateSaves++}};
   const context={
     app:{post:(route,...args)=>{handlers[route]=args.at(-1)}},auth(){},receiveTradeImages(){},
-    requestImages:()=>[],discardRequestImages:async()=>{},imageType:()=>'',storedTradeImages:()=>[],
-    removeStoredImage:async()=>{},maxTradeImages:10,validId:()=>true,
+    requestImages:()=>[],requestVideos:()=>[],discardRequestImages:async()=>{},imageType:()=>'',storedTradeImages:()=>[],storedTradeVideos:()=>[],
+    removeStoredImage:async()=>{},maxTradeImages:10,maxTradeVideos:3,validId:()=>true,
     parseAccountCount:value=>Number(value),validTradeTime:()=>true,SESSION_CHOICES:['auto','New York'],
     resolveTradingSession:()=> 'New York',planFollowUpError,isChecklistComplete:()=>true,
     tradingViewSnapshotId:()=>'',recordReturnTo,

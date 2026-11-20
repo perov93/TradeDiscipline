@@ -1,6 +1,6 @@
 <% const example=setup || {};
    const chosenSession=example.session || 'auto'; %>
-<form method="post" action="<%= setup ? '/setups/'+setup._id+'/edit' : '/setups' %>" class="journal-form" enctype="multipart/form-data" data-image-upload>
+<form method="post" action="<%= setup ? '/setups/'+setup._id+'/edit' : '/setups' %>" class="journal-form" enctype="multipart/form-data" data-image-upload data-max-videos="<%= maxTradeVideos %>" data-max-video-bytes="<%= maxVideoBytes %>">
   <input type="hidden" name="_csrf" value="<%= csrf %>">
   <label>SETUP NAME<input name="title" maxlength="140" required value="<%= example.title || '' %>" placeholder="e.g. NY open breakout"></label>
   <div class="form-row">
@@ -39,8 +39,22 @@
       <% }) %>
     </div>
   <% } %>
+  <% if(setup && setup.videos && setup.videos.length){ %>
+    <div class="trade-existing-videos" data-existing-videos>
+      <% setup.videos.forEach((video,index)=>{ %>
+        <div class="trade-existing-video">
+          <button type="button" class="video-preview-trigger" data-video-preview data-video-src="/setups/<%= setup._id %>/videos/<%= video.id %>" data-video-mime="<%= video.mime %>" aria-label="Preview setup video <%= index+1 %>">
+            <span class="video-preview-play" aria-hidden="true"></span><span class="video-preview-label">VIDEO <%= index+1 %></span>
+          </button>
+          <label class="inline-check"><input type="checkbox" name="removeVideos" value="<%= video.id %>"> REMOVE VIDEO</label>
+        </div>
+      <% }) %>
+    </div>
+  <% } %>
   <label>IMAGES (OPTIONAL · UP TO 10 · JPEG, PNG OR WEBP · MAX 5 MB EACH)<input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple data-image-input></label>
   <div class="upload-preview" data-upload-preview hidden></div>
+  <label>SCREEN RECORDINGS (OPTIONAL · UP TO <%= maxTradeVideos %> · MP4 OR WEBM · MAX <%= maxVideoBytes/1e9 %> GB EACH)<input type="file" name="videos" accept="video/mp4,video/webm" multiple data-video-input></label>
+  <div class="upload-preview video-upload-preview" data-video-upload-preview hidden></div>
   <p class="notice danger upload-error" role="alert" hidden></p>
-  <button type="submit" class="primary"><%= setup?'UPDATE EXAMPLE':'SAVE EXAMPLE' %></button>
+  <button type="submit" class="primary<%= setup?' full':'' %>"><%= setup?'SAVE CHANGES':'SAVE EXAMPLE' %></button>
 </form>

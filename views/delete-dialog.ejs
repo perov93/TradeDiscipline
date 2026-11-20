@@ -1,0 +1,14 @@
+<dialog id="setupDeleteDialog" class="rule-dialog setup-delete-dialog" aria-labelledby="setupDeleteTitle" aria-describedby="setupDeleteDescription">
+  <h2 id="setupDeleteTitle">Delete this example?</h2>
+  <p id="setupDeleteDescription">This will permanently delete <strong data-setup-delete-name></strong><span data-delete-impact> and its uploaded media</span>. This cannot be undone.</p>
+  <div class="setup-delete-actions">
+    <form method="dialog">
+      <button type="submit" class="ghost" autofocus>Cancel</button>
+    </form>
+    <form method="post" data-setup-delete-form>
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <input type="hidden" name="returnTo" value="<%= deleteReturnTo %>">
+      <button type="submit" class="setup-delete-confirm">Delete example</button>
+    </form>
+  </div>
+</dialog>

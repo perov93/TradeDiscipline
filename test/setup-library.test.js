@@ -9,7 +9,10 @@ test('library paginates mixed owner-scoped records and applies filters across bo
   for(let i=0;i<105;i++){
     const record={_id:String(i).padStart(3,'0'),user:'a',createdAt:new Date(Date.UTC(2026,0,1,0,i===103?104:i)),
       instrument:`Instrument-${i}`,strategy:i===1?'BreakXout':i%3===0?'Break.out':'Pullback',outcome:i%4===0?'LOSS':'WIN',
-      pnl:i,currency:'USD',tradeTime:'09:30',side:'BUY',session:'London',account:'Demo',notes:'',images:[]};
+      pnl:i,currency:'USD',tradeTime:'09:30',side:'BUY',session:'London',account:'Demo',notes:'',
+      images:i===104?[{id:'10000000-0000-0000-0000-000000000001'}]:
+        i===103?[{id:'20000000-0000-0000-0000-000000000002'}]:[],
+      tradingViewId:i===104?'ZWvJ4X1B':''};
     if(i%2===0)examples.push({...record,title:`Example-${i}`});
     else trades.push({...record,instrument:`Trade-${i}`,isAPlus:true});
   }
@@ -47,7 +50,11 @@ test('library paginates mixed owner-scoped records and applies filters across bo
   const app=express();
   app.set('view engine','ejs');
   app.set('views',path.join(__dirname,'..','views'));
-  app.use((req,res,next)=>{req.session={user:{id:req.get('x-user')||'a'}};next()});
+  app.use((req,res,next)=>{
+    req.session={user:{id:req.get('x-user')||'a'}};
+    Object.assign(res.locals,{csrf:'test-csrf',success:null});
+    next();
+  });
   app.use('/setup-library',setupLibraryRoutes({
     SetupExample:model(examples),Trade:model(trades),User:{findById:async id=>({_id:id,timezone:id==='c'?'Europe/Sofia':'UTC'})},
     auth:(req,res,next)=>next(),
@@ -70,7 +77,14 @@ test('library paginates mixed owner-scoped records and applies filters across bo
   assert.match(html,/aria-label="Side: BUY">BUY<\/span>/);
   assert.match(html,/aria-label="Instrument: Instrument-104">Instrument-104<\/span>/);
   assert.match(html,/aria-label="Session: London">London<\/span>/);
-  assert.match(html,/href="\/\?setupId=104#setups">EDIT OR DELETE EXAMPLE/);
+  assert.match(html,/href="\/\?setupId=104#setups">EDIT EXAMPLE/);
+  assert.match(html,/src="\/image-preview\.js\?v=1"/);
+  assert.match(html,/<dialog id="imagePreviewDialog"/);
+  assert.match(html,/data-image-src="\/setups\/104\/images\/10000000-0000-0000-0000-000000000001"/);
+  assert.match(html,/data-image-src="\/trades\/103\/images\/20000000-0000-0000-0000-000000000002"/);
+  assert.match(html,/data-image-src="https:\/\/s3\.tradingview\.com\/snapshots\/z\/ZWvJ4X1B\.png" data-trading-view-id="ZWvJ4X1B"/);
+  assert.match(html,/data-setup-delete="\/setups\/104\/delete" data-setup-title="Example-104">DELETE EXAMPLE<\/button>/);
+  assert.match(html,/<dialog id="setupDeleteDialog"[^>]*>[\s\S]*?<form method="dialog">\s*<button[^>]*autofocus>Cancel<\/button>[\s\S]*?<form method="post" data-setup-delete-form>\s*<input type="hidden" name="_csrf" value="test-csrf">\s*<input type="hidden" name="returnTo" value="setup-library">/);
   assert.match(html,/href="\/\?calendarDate=2026-01-01#calendar">OPEN TRADE IN CALENDAR/);
   assert.match(html,/PAGE 1 OF 6/);
   assert.equal((html.match(/<details class="setup-record"/g)||[]).length,20);
@@ -94,7 +108,7 @@ test('library paginates mixed owner-scoped records and applies filters across bo
   assert.doesNotMatch(html,/JOURNAL TRADE|Example-4\s*</);
   html=await (await fetch(base+'?search=Break.out&type=trade')).text();
   assert.match(html,/JOURNAL TRADE/);
-  assert.doesNotMatch(html,/SAVED EXAMPLE/);
+  assert.doesNotMatch(html,/SAVED EXAMPLE|DELETE EXAMPLE|\/delete|id="setupDeleteDialog"/);
   assert.doesNotMatch(html,/Trade-1\s*</);
   html=await (await fetch(base+'?search=BreakXout')).text();
   assert.match(html,/1 RECORDS/);

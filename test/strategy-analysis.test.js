@@ -60,6 +60,26 @@ test('strategy win rates group names, exclude break-even and combine currencies'
   assert.deepEqual(rows.filter(row=>row.children[0].textContent==='No strategy').map(row=>row.children[2].textContent).sort(),['0%','100%']);
 });
 
+test('strategy month and all-time drill-downs stay within the selected account records',()=>{
+  const {nodes,render,context}=setup();
+  context.trades=[
+    {id:'1',date:'2026-01-02',createdAt:'2026-01-02T10:00:00Z',account:'Apex',strategy:'Breakout',outcome:'WIN',pnl:25},
+    {id:'2',date:'2025-12-02',createdAt:'2025-12-02T10:00:00Z',account:'Apex',strategy:'Breakout',outcome:'LOSS',pnl:-5},
+    {id:'3',date:'2025-11-02',createdAt:'2025-11-02T10:00:00Z',account:'Personal',strategy:'Breakout',outcome:'WIN',pnl:900}
+  ];
+  render(context.trades.slice(0,1),'January 2026 · Apex',context.trades.slice(0,2));
+  nodes.strategyAnalysis.children[0].click();
+  assert.equal(nodes.strategyTradesRange.children.some(option=>option.value==='2025-11'),false);
+  nodes.strategyTradesRange.value='all';
+  nodes.strategyTradesRange.onchange();
+  assert.equal(nodes.strategyTradesSummary.children[0].children[1].textContent,'USD 20');
+  assert.match(nodes.strategyTradesPeriod.textContent,/2 trades/);
+  nodes.strategyTradesRange.value='2025-12';
+  nodes.strategyTradesRange.onchange();
+  assert.equal(nodes.strategyTradesSummary.children[0].children[1].textContent,'USD -5');
+  assert.match(nodes.strategyTradesPeriod.textContent,/1 trade/);
+});
+
 test('strategy rows open only their own records with their period and navigate to the trade day',()=>{
   const {nodes,render,context}=setup();
   const trades=[

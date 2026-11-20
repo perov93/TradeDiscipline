@@ -297,6 +297,7 @@ if(ruleDialog&&ruleEditor){
     title.textContent='EDIT RULE';
     ruleEditor.action='/rules/'+encodeURIComponent(id)+'/edit';
     ruleDeleteForm.action='/rules/'+encodeURIComponent(id)+'/delete';
+    ruleDeleteForm.dataset.deleteName=button.dataset.title;
     name.value=button.dataset.title||'';
     description.value=button.dataset.description||'';
     active.checked=button.dataset.active==='true';
@@ -304,7 +305,6 @@ if(ruleDialog&&ruleEditor){
     ruleDialog.showModal();
     name.focus();
   }));
-  ruleDialog.addEventListener('click',event=>{if(event.target===ruleDialog)ruleDialog.close()});
 }
 
 const dataElement=document.getElementById('trade-data');
@@ -359,98 +359,6 @@ document.querySelectorAll('form[data-confirm]').forEach(form=>{
 const tradeDialog=document.getElementById('tradeDialog');
 const tradeEditor=document.getElementById('tradeEditor');
 const tradesById=new Map(trades.map(trade=>[trade.id,trade]));
-const imageDialog=document.getElementById('imagePreviewDialog');
-const fullImage=document.getElementById('imagePreviewFull');
-const imagePreviewStatus=document.getElementById('imagePreviewStatus');
-const imageViewport=document.getElementById('imagePreviewViewport');
-const imageZoomIn=document.getElementById('imageZoomIn');
-const imageZoomOut=document.getElementById('imageZoomOut');
-const imageZoomReset=document.getElementById('imageZoomReset');
-const imagePreviewTradingView=document.getElementById('imagePreviewTradingView');
-let imageZoom=1;
-let imageDrag=null;
-const updateImageZoom=()=>{
-  const fitWidth=Math.min(fullImage.naturalWidth,imageViewport.clientWidth,
-    imageViewport.clientHeight*fullImage.naturalWidth/fullImage.naturalHeight);
-  fullImage.style.width=`${fitWidth*imageZoom}px`;
-  imageZoomReset.textContent=`${Math.round(imageZoom*100)}%`;
-  imageZoomOut.disabled=imageZoom<=1;
-  imageZoomIn.disabled=imageZoom>=4;
-  imageZoomReset.disabled=imageZoom===1;
-  imageViewport.classList.toggle('is-zoomed',imageZoom>1);
-};
-const changeImageZoom=zoom=>{
-  const oldWidth=fullImage.clientWidth,oldHeight=fullImage.clientHeight;
-  const centerX=imageViewport.scrollLeft+imageViewport.clientWidth/2;
-  const centerY=imageViewport.scrollTop+imageViewport.clientHeight/2;
-  imageZoom=Math.max(1,Math.min(4,zoom));
-  updateImageZoom();
-  imageViewport.scrollLeft=centerX*fullImage.clientWidth/oldWidth-imageViewport.clientWidth/2;
-  imageViewport.scrollTop=centerY*fullImage.clientHeight/oldHeight-imageViewport.clientHeight/2;
-};
-imageZoomIn.addEventListener('click',()=>changeImageZoom(imageZoom+0.25));
-imageZoomOut.addEventListener('click',()=>changeImageZoom(imageZoom-0.25));
-imageZoomReset.addEventListener('click',()=>changeImageZoom(1));
-imageViewport.addEventListener('pointerdown',event=>{
-  if(imageZoom<=1||!event.isPrimary||event.button!==0)return;
-  imageDrag={pointerId:event.pointerId,x:event.clientX,y:event.clientY,left:imageViewport.scrollLeft,top:imageViewport.scrollTop};
-  imageViewport.setPointerCapture(event.pointerId);
-  imageViewport.classList.add('is-dragging');
-});
-imageViewport.addEventListener('pointermove',event=>{
-  if(!imageDrag||event.pointerId!==imageDrag.pointerId)return;
-  imageViewport.scrollLeft=imageDrag.left+imageDrag.x-event.clientX;
-  imageViewport.scrollTop=imageDrag.top+imageDrag.y-event.clientY;
-});
-const endImageDrag=event=>{
-  if(!imageDrag||event.pointerId!==imageDrag.pointerId)return;
-  imageDrag=null;
-  imageViewport.classList.remove('is-dragging');
-};
-imageViewport.addEventListener('pointerup',endImageDrag);
-imageViewport.addEventListener('pointercancel',endImageDrag);
-imageViewport.addEventListener('lostpointercapture',endImageDrag);
-window.addEventListener('resize',()=>{if(imageDialog.open&&!fullImage.hidden)updateImageZoom()});
-fullImage.addEventListener('load',()=>{
-  imagePreviewStatus.hidden=true;
-  imageViewport.hidden=false;
-  fullImage.hidden=false;
-  imageZoom=1;
-  imageViewport.scrollLeft=0;
-  imageViewport.scrollTop=0;
-  updateImageZoom();
-});
-fullImage.addEventListener('error',()=>{
-  imagePreviewStatus.textContent='Could not load this image. Close the preview and try again.';
-  imagePreviewStatus.hidden=false;
-  imageViewport.hidden=true;
-  fullImage.hidden=true;
-  imageZoomIn.disabled=true;
-  imageZoomOut.disabled=true;
-  imageZoomReset.disabled=true;
-});
-function bindImagePreview(button){
-  button.addEventListener('click',()=>{
-    imagePreviewStatus.textContent='Loading image preview…';
-    imagePreviewStatus.hidden=false;
-    imageViewport.hidden=true;
-    fullImage.hidden=true;
-    imageZoomIn.disabled=true;
-    imageZoomOut.disabled=true;
-    imageZoomReset.disabled=true;
-    imageZoomReset.textContent='100%';
-    const snapshotId=button.dataset.tradingViewId||'';
-    imagePreviewTradingView.hidden=!tradingViewSnapshotImageUrl(snapshotId);
-    if(imagePreviewTradingView.hidden)imagePreviewTradingView.removeAttribute('href');
-    else imagePreviewTradingView.href=`https://www.tradingview.com/x/${snapshotId}/`;
-    imageDialog.showModal();
-    fullImage.src=button.dataset.imageSrc;
-    if(fullImage.complete){
-      if(fullImage.naturalWidth)fullImage.dispatchEvent(new Event('load'));
-      else fullImage.dispatchEvent(new Event('error'));
-    }
-  });
-}
 function tradingViewSnapshotId(value){
   try{
     const url=new URL(value.trim());
@@ -511,12 +419,15 @@ function updateTradingViewPreview(form){
   preview.append(button,link);
   preview.hidden=false;
 }
-document.querySelectorAll('.image-preview-trigger').forEach(bindImagePreview);
 document.querySelectorAll('[data-image-upload]').forEach(form=>{
   const input=form.querySelector('[data-image-input]');
   const preview=form.querySelector('[data-upload-preview]');
+  const videoInput=form.querySelector('[data-video-input]');
+  const videoPreview=form.querySelector('[data-video-upload-preview]');
   const error=form.querySelector('.upload-error');
   const tradingViewInput=form.querySelector('[data-tradingview-input]');
+  const maxVideos=Number(form.dataset.maxVideos)||3;
+  const maxVideoBytes=Number(form.dataset.maxVideoBytes)||1e9;
   if(tradingViewInput){
     form.updateTradingViewPreview=()=>updateTradingViewPreview(form);
     tradingViewInput.addEventListener('input',form.updateTradingViewPreview);
@@ -530,6 +441,16 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
     preview.hidden=true;
   };
   form.clearImagePreview=clearPreview;
+  let videoPreviewUrls=[];
+  const clearVideoPreview=()=>{
+    videoPreviewUrls.forEach(url=>URL.revokeObjectURL(url));
+    videoPreviewUrls=[];
+    if(videoPreview){
+      videoPreview.replaceChildren();
+      videoPreview.hidden=true;
+    }
+  };
+  form.clearVideoPreview=clearVideoPreview;
   input.addEventListener('change',()=>{
     clearPreview();
     error.hidden=true;
@@ -558,6 +479,50 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
     });
     preview.hidden=false;
   });
+  if(videoInput&&videoPreview){
+    videoInput.addEventListener('change',()=>{
+      clearVideoPreview();
+      error.hidden=true;
+      const files=[...videoInput.files];
+      const existingCount=form.querySelectorAll('[data-existing-videos] .trade-existing-video').length;
+      const removingCount=form.querySelectorAll('[data-existing-videos] input[name="removeVideos"]:checked').length;
+      if(existingCount-removingCount+files.length>maxVideos){
+        videoInput.value='';
+        error.textContent=`A record can have up to ${maxVideos} videos. Remove a video before adding another.`;
+        error.hidden=false;
+        return;
+      }
+      if(files.some(file=>!['video/mp4','video/webm'].includes(file.type))){
+        videoInput.value='';
+        error.textContent='Choose MP4 or WebM video files.';
+        error.hidden=false;
+        return;
+      }
+      if(files.some(file=>file.size>maxVideoBytes)){
+        videoInput.value='';
+        error.textContent=`Videos must be ${maxVideoBytes/1e9} GB or smaller.`;
+        error.hidden=false;
+        return;
+      }
+      files.forEach(file=>{
+        const url=URL.createObjectURL(file);
+        videoPreviewUrls.push(url);
+        const item=document.createElement('div');
+        item.className='video-upload-item';
+        const video=document.createElement('video');
+        video.src=url;
+        video.controls=true;
+        video.muted=true;
+        video.playsInline=true;
+        video.preload='metadata';
+        const name=document.createElement('span');
+        name.textContent=file.name;
+        item.append(video,name);
+        videoPreview.append(item);
+      });
+      videoPreview.hidden=!files.length;
+    });
+  }
   form.addEventListener('submit',async event=>{
     if(event.defaultPrevented)return;
     event.preventDefault();
@@ -568,6 +533,15 @@ document.querySelectorAll('[data-image-upload]').forEach(form=>{
       error.textContent='A trade can have up to 10 images. Remove an image before adding another.';
       error.hidden=false;
       return;
+    }
+    if(videoInput){
+      const existingVideoCount=form.querySelectorAll('[data-existing-videos] .trade-existing-video').length;
+      const removingVideoCount=form.querySelectorAll('[data-existing-videos] input[name="removeVideos"]:checked').length;
+      if(existingVideoCount-removingVideoCount+videoInput.files.length>maxVideos){
+        error.textContent=`A record can have up to ${maxVideos} videos. Remove a video before adding another.`;
+        error.hidden=false;
+        return;
+      }
     }
     const submit=form.querySelector('[type="submit"]');
     submit.disabled=true;
@@ -658,15 +632,61 @@ function editTrade(id,returnTo='calendar'){
     item.append(preview,removeLabel);
     existingImage.append(item);
   });
+  const existingVideo=document.getElementById('tradeExistingVideo');
+  existingVideo.replaceChildren();
+  (trade.videos||[]).forEach((video,index)=>{
+    const item=document.createElement('div');
+    item.className='trade-existing-video';
+    const preview=document.createElement('button');
+    preview.type='button';
+    preview.className='video-preview-trigger';
+    preview.dataset.videoPreview='';
+    preview.dataset.videoSrc=`/trades/${encodeURIComponent(id)}/videos/${encodeURIComponent(video.id)}`;
+    preview.dataset.videoMime=video.mime;
+    preview.setAttribute('aria-label',`Preview existing trade video ${index+1}`);
+    const play=document.createElement('span');
+    play.className='video-preview-play';
+    play.setAttribute('aria-hidden','true');
+    const label=document.createElement('span');
+    label.className='video-preview-label';
+    label.textContent=`VIDEO ${index+1}`;
+    preview.append(play,label);
+    const removeLabel=document.createElement('label');
+    removeLabel.className='inline-check';
+    const remove=document.createElement('input');
+    remove.type='checkbox';
+    remove.name='removeVideos';
+    remove.value=video.id;
+    removeLabel.append(remove,document.createTextNode(' REMOVE VIDEO'));
+    item.append(preview,removeLabel);
+    existingVideo.append(item);
+  });
   tradeEditor.clearImagePreview();
+  tradeEditor.clearVideoPreview();
   tradeEditor.querySelector('[data-image-input]').value='';
+  tradeEditor.querySelector('[data-video-input]').value='';
   tradeEditor.querySelector('.upload-error').hidden=true;
   document.getElementById('tradeEditDate').textContent=`TRADE DATE · ${trade.date}`;
   tradeDialog.showModal();
   tradeFields.instrument.focus();
 }
+function editNoSetup(id,returnTo='calendar'){
+  const entry=noSetupEntries.find(entry=>entry.id===id);
+  if(!entry)throw new Error(`No-setup entry ${id} is not available for editing.`);
+  const editor=document.getElementById('noSetupEditor');
+  editor.action='/no-setup/'+encodeURIComponent(id)+'/edit';
+  document.getElementById('noSetupReturnTo').value=returnTo;
+  document.getElementById('noSetupReturnDate').value=entry.date;
+  document.getElementById('noSetupDate').value=entry.date;
+  document.getElementById('noSetupNotes').value=entry.notes||'';
+  document.getElementById('noSetupDialog').showModal();
+  document.getElementById('noSetupDate').focus();
+}
+document.getElementById('noSetupDate').addEventListener('change',event=>{
+  document.getElementById('noSetupReturnDate').value=event.target.value;
+});
+document.querySelectorAll('.no-setup-edit-trigger').forEach(button=>button.addEventListener('click',()=>editNoSetup(button.dataset.entryId,button.dataset.returnTo)));
 document.querySelectorAll('.trade-edit-trigger').forEach(button=>button.addEventListener('click',()=>editTrade(button.dataset.tradeId,button.dataset.returnTo||'calendar')));
-tradeDialog.addEventListener('click',event=>{if(event.target===tradeDialog)tradeDialog.close()});
 imageDialog.addEventListener('click',event=>{if(event.target===imageDialog)imageDialog.close()});
 tradeFields.currency.addEventListener('input',()=>{tradeFields.currency.value=tradeFields.currency.value.toUpperCase()});
 
@@ -708,13 +728,62 @@ const analysisWinRate=document.getElementById('analysisWinRate');
 const analysisPlanRate=document.getElementById('analysisPlanRate');
 const analysisNetPnl=document.getElementById('analysisNetPnl');
 const analysisCurrency=document.getElementById('analysisCurrency');
+const analysisAccountFilter=document.getElementById('analysisAccountFilter');
+const analysisAccountToggle=document.getElementById('analysisAccountToggle');
+const analysisAccountMenu=document.getElementById('analysisAccountMenu');
+const analysisAccountOptions=document.getElementById('analysisAccountOptions');
+const analysisAccountSummary=document.getElementById('analysisAccountSummary');
+const allAnalysisAccountKeys=new Set();
+const analysisAccountLabels=new Map();
+const selectedAnalysisAccounts=new Set();
+let draftAnalysisAccounts=new Set();
+const accountCurrencies=new Map();
+trades.forEach(trade=>{
+  const account=(trade.account||'').trim();
+  const key=account?`account:${account}`:'unassigned';
+  if(!accountCurrencies.has(key))accountCurrencies.set(key,{label:account||'Unassigned',currencies:new Set()});
+  accountCurrencies.get(key).currencies.add(trade.currency||'USD');
+});
+const accountOptions=[...accountCurrencies.entries()]
+  .sort(([a],[b])=>{
+    if(a==='unassigned')return 1;
+    if(b==='unassigned')return -1;
+    return accountCurrencies.get(a).label.localeCompare(accountCurrencies.get(b).label);
+  });
+accountOptions.forEach(([key,account])=>{
+  allAnalysisAccountKeys.add(key);
+  selectedAnalysisAccounts.add(key);
+  analysisAccountLabels.set(key,account.label);
+  const option=document.createElement('label');
+  option.className='analysis-account-option';
+  const checkbox=document.createElement('input');
+  checkbox.type='checkbox';
+  checkbox.checked=true;
+  checkbox.dataset.accountKey=key;
+  const name=document.createElement('span');
+  name.className='analysis-account-name';
+  name.textContent=account.label;
+  const currencies=document.createElement('span');
+  currencies.className='analysis-account-currencies';
+  currencies.textContent=[...account.currencies].sort().join(' · ');
+  option.append(checkbox,name,currencies);
+  analysisAccountOptions.append(option);
+});
+if(!accountOptions.length){
+  const empty=document.createElement('p');
+  empty.className='analysis-account-empty';
+  empty.textContent='No trading accounts recorded yet.';
+  analysisAccountOptions.append(empty);
+}
+draftAnalysisAccounts=new Set(selectedAnalysisAccounts);
 const equityChart=document.getElementById('equityChart');
 const equityChartCaption=document.getElementById('equityChartCaption');
 const equityChartEmpty=document.getElementById('equityChartEmpty');
 const outcomeBreakdown=document.getElementById('outcomeBreakdown');
 const dailyBars=document.getElementById('dailyBars');
 const dailyAnalysisCaption=document.getElementById('dailyAnalysisCaption');
-let analysisRange=grid.dataset.analysisRange||'month';
+const defaultAnalysisRange=grid.dataset.analysisRange||'month';
+let analysisRange=defaultAnalysisRange;
 let selectedAnalysisCurrency=defaultCalendarCurrency;
 const currencyTotals=items=>items.reduce((totals,trade)=>{
   const currency=trade.currency||'USD';
@@ -724,6 +793,38 @@ const currencyTotals=items=>items.reduce((totals,trade)=>{
 const formatTotals=totals=>[...totals].sort(([a],[b])=>a.localeCompare(b))
   .map(([currency,value])=>`${currency} ${value>0?'+':''}${value.toFixed(2)}`).join(' · ');
 const formatPnl=(value,currency)=>`${currency} ${Number(value||0)>0?'+':''}${Number(value||0).toFixed(2)}`;
+function getAccountRecords(records){
+  if(selectedAnalysisAccounts.size===allAnalysisAccountKeys.size)return records;
+  return records.filter(record=>selectedAnalysisAccounts.has(getAnalysisAccountKey(record)));
+}
+function getAnalysisAccountKey(record){
+  const account=(record.account||'').trim();
+  return account?`account:${account}`:'unassigned';
+}
+function getAnalysisAccountLabel(){
+  if(selectedAnalysisAccounts.size===allAnalysisAccountKeys.size)return '';
+  if(!selectedAnalysisAccounts.size)return 'No accounts';
+  if(selectedAnalysisAccounts.size===1){
+    return analysisAccountLabels.get([...selectedAnalysisAccounts][0])||'1 account';
+  }
+  return `${selectedAnalysisAccounts.size} accounts`;
+}
+function updateAnalysisAccountSummary(){
+  analysisAccountSummary.textContent=getAnalysisAccountLabel()||'All accounts';
+}
+function syncDraftAnalysisAccounts(){
+  analysisAccountOptions.querySelectorAll('input[data-account-key]').forEach(checkbox=>{
+    checkbox.checked=draftAnalysisAccounts.has(checkbox.dataset.accountKey);
+  });
+}
+function setAnalysisAccountMenuOpen(open,discardDraft=true){
+  analysisAccountMenu.hidden=!open;
+  analysisAccountToggle.setAttribute('aria-expanded',String(open));
+  if(!open&&discardDraft){
+    draftAnalysisAccounts=new Set(selectedAnalysisAccounts);
+    syncDraftAnalysisAccounts();
+  }
+}
 function getAnalysisRecords(records){
   const year=current.getFullYear(),month=String(current.getMonth()+1).padStart(2,'0');
   if(analysisRange==='month'){
@@ -904,7 +1005,7 @@ function renderPerformanceStats(items,currency){
   document.getElementById('performanceStatsCaption').textContent=currency?
     `${currency} · ${analysisPeriodLabel.textContent} · journal records only`:'No trades in this period';
 }
-function showStrategyTrades(group,periodLabel){
+function showStrategyTrades(group,periodLabel,records=trades){
   const dialog=document.getElementById('strategyTradesDialog');
   document.getElementById('strategyTradesTitle').textContent=group.name;
   const summary=document.getElementById('strategyTradesSummary');
@@ -912,7 +1013,7 @@ function showStrategyTrades(group,periodLabel){
   const range=document.getElementById('strategyTradesRange');
   const filters=[...dialog.querySelectorAll('[data-strategy-outcome]')];
   const strategyKey=(group.trades[0]?.strategy||'').trim().toLocaleLowerCase();
-  const allRecords=trades.filter(trade=>(trade.strategy||'').trim().toLocaleLowerCase()===strategyKey);
+  const allRecords=records.filter(trade=>(trade.strategy||'').trim().toLocaleLowerCase()===strategyKey);
   const node=(tag,className,text='')=>{
     const element=document.createElement(tag);
     element.className=className;
@@ -1021,7 +1122,7 @@ function showStrategyTrades(group,periodLabel){
   render();
   dialog.showModal();
 }
-function renderStrategyAnalysis(items,periodLabel){
+function renderStrategyAnalysis(items,periodLabel,records=trades){
   const groups=new Map();
   items.forEach(trade=>{
     const name=(trade.strategy||'').trim();
@@ -1056,24 +1157,27 @@ function renderStrategyAnalysis(items,periodLabel){
     rate.textContent=decisive?`${Math.round(group.wins/decisive*100)}%`:'—';
     rate.setAttribute('aria-label',decisive?`${rate.textContent} win rate`:'Win rate unavailable');
     row.append(name,detail,rate);
-    row.addEventListener('click',()=>showStrategyTrades(group,periodLabel));
+    row.addEventListener('click',()=>showStrategyTrades(group,periodLabel,records));
     container.append(row);
   });
 }
 function renderAnalysis(){
-  const items=getAnalysisRecords(trades);
+  const accountRecords=getAccountRecords(trades);
+  const items=getAnalysisRecords(accountRecords);
   analysisNoSetupCount.textContent=String(getAnalysisRecords(noSetupEntries).length);
   const currencies=[...currencyTotals(items).keys()].sort();
   if(!currencies.includes(selectedAnalysisCurrency))selectedAnalysisCurrency=currencies[0]||'';
   analysisCurrency.replaceChildren();
   currencies.forEach(currency=>{
-    const option=document.createElement('option');
-    option.value=currency;
-    option.textContent=currency;
-    analysisCurrency.append(option);
+    const button=document.createElement('button');
+    button.type='button';
+    button.className='analysis-currency-button';
+    button.dataset.analysisCurrency=currency;
+    button.textContent=currency;
+    button.setAttribute('aria-pressed',String(currency===selectedAnalysisCurrency));
+    analysisCurrency.append(button);
   });
-  analysisCurrency.disabled=currencies.length===0;
-  analysisCurrency.value=selectedAnalysisCurrency;
+  analysisCurrency.setAttribute('aria-disabled',String(currencies.length===0));
   const wins=items.filter(trade=>trade.outcome==='WIN').length;
   const losses=items.filter(trade=>trade.outcome==='LOSS').length;
   const breakeven=items.filter(trade=>trade.outcome==='BREAKEVEN').length;
@@ -1117,8 +1221,10 @@ function renderAnalysis(){
   const rangeLabel=analysisRange==='month'?title.textContent:
     analysisRange==='day'?(selectedCalendarDate?`Selected day · ${selectedCalendarDate}`:'Select a day on the calendar'):
       analysisRange==='7d'?'Last 7 days':analysisRange==='30d'?'Last 30 days':'All recorded trades';
-  analysisPeriodLabel.textContent=rangeLabel;
-  renderStrategyAnalysis(items,rangeLabel);
+  const accountLabel=getAnalysisAccountLabel();
+  const periodLabel=accountLabel?`${rangeLabel} · ${accountLabel}`:rangeLabel;
+  analysisPeriodLabel.textContent=periodLabel;
+  renderStrategyAnalysis(items,periodLabel,accountRecords);
   analysisRangeButtons.forEach(button=>{
     const active=button.dataset.analysisRange===analysisRange;
     button.classList.toggle('is-selected',active);
@@ -1195,13 +1301,15 @@ function showDay(date,items){
     return element;
   };
   const header=make('div','day-records-header');
+  const heading=make('div','day-records-heading');
   const titleWrap=make('div','day-records-title');
   const [y,m,d]=date.split('-').map(Number);
   titleWrap.append(
     make('span','day-records-kicker','RECORDS'),
     make('h3','',new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(Date.UTC(y,m-1,d))))
   );
-  header.append(titleWrap);
+  heading.append(titleWrap);
+  header.append(heading);
   selected.append(header);
   const noSetups=noSetupEntries.filter(entry=>entry.date===date);
   if(!items.length&&!noSetups.length){
@@ -1238,6 +1346,73 @@ function showDay(date,items){
   }
   header.append(stats);
   const list=make('div','day-records-grid');
+  list.id='calendarDayRecords';
+  const dayList=make('div','calendar-day-list setup-library-table setup-card-list');
+  dayList.id='calendarDayList';
+  dayList.setAttribute('role','group');
+  dayList.setAttribute('aria-label',`Day records for ${date} (${calendarTimezone})`);
+  const columns=make('div','setup-library-table-head');
+  columns.setAttribute('aria-hidden','true');
+  ['TIME','TRADE','SIDE','INSTR.','SESSION','STRATEGY','RESULT','P&L',''].forEach(label=>columns.append(make('span','',label)));
+  const dayGroup=make('div','recent-trade-group');
+  const dayLabel=new Intl.DateTimeFormat('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric',timeZone:'UTC'})
+    .format(new Date(Date.UTC(y,m-1,d))).toUpperCase();
+  dayGroup.append(make('div','recent-trade-day',dayLabel));
+  dayList.append(columns,dayGroup);
+  const makeListRecord=({time,name,subtitle,side,instrument,session,strategy,planStatus,planClass,outcome,tone,amount,pnlClass})=>{
+    const entry=make('details','setup-record');
+    const summary=make('summary','recent-trade-row');
+    const identity=make('span','recent-trade-name',name);
+    const sideTone=side==='BUY'?'pnl-pos':side==='SELL'?'pnl-neg':'';
+    if(side)identity.append(make('span',`recent-trade-side ${sideTone}`,side));
+    const sub=make('span','recent-trade-sub',subtitle);
+    if(planStatus){
+      sub.classList.add('calendar-list-trade-meta');
+      sub.append(make('span',`record-chip ${planClass}`,planStatus));
+    }
+    identity.append(sub);
+    const cell=(className,label,value)=>{
+      const span=make('span',className,value||'—');
+      span.setAttribute('aria-label',`${label}: ${value||'not recorded'}`);
+      return span;
+    };
+    const chevron=make('span','setup-record-chevron','⌄');
+    chevron.setAttribute('aria-hidden','true');
+    const strategyCell=cell('setup-library-strategy','Strategy',strategy);
+    if(strategy){
+      strategyCell.textContent='';
+      strategyCell.append(make('span','record-chip record-chip-warn',strategy));
+    }
+    summary.append(make('span','recent-trade-time',time||'—'),identity,
+      cell(`setup-library-side ${sideTone}`,'Side',side),cell('setup-library-instrument','Instrument',instrument),
+      cell('setup-library-session','Session',session),strategyCell,
+      make('span',`setup-record-outcome${tone?` setup-record-outcome-${tone}`:''}`,outcome||''),
+      cell(`recent-trade-amount ${pnlClass||''}`,'P&L',amount),chevron);
+    const detail=make('div','setup-record-detail');
+    const info=make('div','setup-record-info');
+    detail.append(info);
+    entry.append(summary,detail);
+    dayGroup.append(entry);
+    return {entry,detail,info};
+  };
+  const viewSwitch=make('div','day-records-view-switch');
+  viewSwitch.setAttribute('role','group');
+  viewSwitch.setAttribute('aria-label','Day records view');
+  const viewButtons=['Cards','List'].map(label=>{
+    const button=make('button','',label);
+    button.type='button';
+    button.dataset.view=label.toLowerCase();
+    button.setAttribute('aria-controls',`${list.id} ${dayList.id}`);
+    viewSwitch.append(button);
+    return button;
+  });
+  const setDayRecordsView=view=>{
+    selected.dataset.recordsView=view;
+    viewButtons.forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===view)));
+  };
+  viewButtons.forEach(button=>button.addEventListener('click',()=>setDayRecordsView(button.dataset.view)));
+  setDayRecordsView(selected.dataset.recordsView||'cards');
+  heading.append(viewSwitch);
   noSetups.forEach((entry,index)=>{
     const record=make('article','calendar-record record-card record-even record-no-setup');
     record.setAttribute('aria-label',`No-setup entry ${index+1}`);
@@ -1247,50 +1422,20 @@ function showDay(date,items){
     record.append(make('strong','','NO SETUP PRESENTED'));
     record.append(make('p','calendar-record-notes','No trade recorded for this entry.'));
     if(entry.notes)record.append(make('p','calendar-record-notes no-setup-notes',entry.notes));
+    const listRecord=makeListRecord({name:'No setup presented',subtitle:`NO SETUP ${String(index+1).padStart(2,'0')}`});
+    listRecord.info.append(make('p','','No trade recorded for this entry.'));
+    if(entry.notes)listRecord.info.append(make('p','no-setup-notes',entry.notes));
     const actions=make('div','no-setup-calendar-actions');
-    const edit=make('details','no-setup-calendar-edit');
-    edit.append(make('summary','','EDIT ENTRY'));
-    const form=document.createElement('form');
-    form.method='post';
-    form.action=`/no-setup/${encodeURIComponent(entry.id)}/edit`;
-    form.className='journal-form';
-    const csrf=document.createElement('input');
-    csrf.type='hidden';
-    csrf.name='_csrf';
-    csrf.value=grid.dataset.csrf;
-    const returnTo=document.createElement('input');
-    returnTo.type='hidden';
-    returnTo.name='returnTo';
-    returnTo.value='calendar';
-    const returnDate=document.createElement('input');
-    returnDate.type='hidden';
-    returnDate.name='returnDate';
-    returnDate.value=entry.date;
-    const dateLabel=make('label','','DATE');
-    const dateInput=document.createElement('input');
-    dateInput.type='date';
-    dateInput.name='date';
-    dateInput.value=entry.date;
-    dateInput.required=true;
-    dateLabel.append(dateInput);
-    const notesLabel=make('label','','NOTES (OPTIONAL)');
-    const notesInput=document.createElement('textarea');
-    notesInput.name='notes';
-    notesInput.maxLength=3000;
-    notesInput.rows=3;
-    notesInput.value=entry.notes||'';
-    notesLabel.append(notesInput);
-    const save=make('button','outline','SAVE CHANGES');
-    save.type='submit';
-    dateInput.addEventListener('change',()=>{returnDate.value=dateInput.value});
-    form.append(csrf,returnTo,returnDate,dateLabel,notesLabel,save);
-    edit.append(form);
+    const edit=make('button','textbutton no-setup-edit-trigger','EDIT ENTRY');
+    edit.type='button';
+    edit.setAttribute('aria-haspopup','dialog');
+    edit.setAttribute('aria-controls','noSetupDialog');
+    edit.addEventListener('click',()=>editNoSetup(entry.id,'calendar'));
     const deleteForm=document.createElement('form');
     deleteForm.method='post';
     deleteForm.action=`/no-setup/${encodeURIComponent(entry.id)}/delete`;
-    deleteForm.addEventListener('submit',event=>{
-      if(!window.confirm('Delete this no-setup entry?'))event.preventDefault();
-    });
+    deleteForm.dataset.deleteKind='no-setup entry';
+    deleteForm.dataset.deleteName=`No-setup entry · ${entry.date}`;
     const deleteCsrf=document.createElement('input');
     deleteCsrf.type='hidden';
     deleteCsrf.name='_csrf';
@@ -1310,20 +1455,24 @@ function showDay(date,items){
     record.append(actions);
     list.append(record);
   });
-  const timeFormat=new Intl.DateTimeFormat('en-GB',{timeZone:calendarTimezone,hour:'2-digit',minute:'2-digit'});
+  const timeFormat=new Intl.DateTimeFormat('en-GB',{timeZone:calendarTimezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const orderedTrades=items.map(trade=>({
+    trade,time:trade.tradeTime||(trade.createdAt?timeFormat.format(new Date(trade.createdAt)):'')
+  })).sort((a,b)=>a.time.localeCompare(b.time));
   const money=(value,currency)=>new Intl.NumberFormat('en-US',{
     style:'currency',currency:currency||'USD',currencyDisplay:'narrowSymbol',
     signDisplay:'exceptZero',minimumFractionDigits:2,maximumFractionDigits:2
   }).format(value);
-  items.forEach((trade,index)=>{
+  orderedTrades.forEach(({trade,time},index)=>{
     const outcome=trade.outcome||'BREAKEVEN';
     const tone=outcome==='WIN'?'win':outcome==='LOSS'?'loss':'even';
+    const tradeNumber=`TRADE ${String(index+1).padStart(2,'0')}`;
     const record=make('article',`calendar-record record-card record-${tone}`);
     record.setAttribute('aria-label',`Trade ${index+1}: ${trade.instrument||'Trade'}`);
     const caption=make('div','record-caption');
-    caption.append(make('span','record-number',`TRADE ${String(index+1).padStart(2,'0')}`));
-    if(trade.tradeTime||trade.createdAt){
-      caption.append(make('span','record-time',`${trade.tradeTime||timeFormat.format(new Date(trade.createdAt))} · ${calendarTimezone}`));
+    caption.append(make('span','record-number',tradeNumber));
+    if(time){
+      caption.append(make('span','record-time',`${time} · ${calendarTimezone}`));
     }
     record.append(caption);
     const head=make('div','calendar-record-head');
@@ -1334,10 +1483,13 @@ function showDay(date,items){
     if(trade.side)title.append(make('span',`record-side record-side-${trade.side.toLowerCase()}`,trade.side));
     identity.append(title);
     const amount=Number(trade.pnl||0);
+    const formattedPnl=money(amount,trade.currency);
+    const pnlClass=amount>0?'green':amount<0?'red':'';
+    const currency=trade.currency||'USD';
     const pnl=make('div','record-pnl');
     pnl.append(
-      make('strong',amount>0?'green':amount<0?'red':'',money(amount,trade.currency)),
-      make('span','',trade.currency||'USD')
+      make('strong',pnlClass,formattedPnl),
+      make('span','',currency)
     );
     head.append(identity,pnl);
     record.append(head);
@@ -1363,32 +1515,45 @@ function showDay(date,items){
     if(trade.checklistCompleted===true)chips.append(make('span','record-chip','CHECKLIST COMPLETED'));
     else if(trade.checklistCompleted===false)chips.append(make('span','record-chip record-chip-bad','CHECKLIST MISSED'));
     record.append(chips);
-    const recordImages=make('div','record-images');
-    (trade.images||[]).forEach((imageId,index)=>{
-      const imageButton=make('button','image-preview-trigger record-image');
-      imageButton.type='button';
-      imageButton.dataset.imageSrc=`/trades/${encodeURIComponent(trade.id)}/images/${encodeURIComponent(imageId)}`;
-      imageButton.setAttribute('aria-label',`Preview image ${index+1} for ${trade.instrument||'trade'}`);
-      const image=document.createElement('img');
-      image.src=imageButton.dataset.imageSrc;
-      image.alt=`Trade attachment ${index+1}`;
-      image.loading='lazy';
-      imageButton.append(image,make('span','record-image-enlarge','⤢ ENLARGE'));
-      bindImagePreview(imageButton);
-      recordImages.append(imageButton);
-    });
-    if(trade.tradingViewId){
-      const snapshotButton=createTradingViewPreviewButton(trade.tradingViewId,`Preview TradingView snapshot for ${trade.instrument||'trade'}`);
-      if(snapshotButton){
-        snapshotButton.classList.add('record-image');
-        snapshotButton.append(make('span','record-image-enlarge','⤢ ENLARGE'));
-        recordImages.append(snapshotButton);
+    const makeImages=(withOverlay=true)=>{
+      const gallery=make('div','record-images');
+      (trade.images||[]).forEach((imageId,index)=>{
+        const imageButton=make('button','image-preview-trigger record-image');
+        imageButton.type='button';
+        imageButton.dataset.imageSrc=`/trades/${encodeURIComponent(trade.id)}/images/${encodeURIComponent(imageId)}`;
+        imageButton.setAttribute('aria-label',`Preview image ${index+1} for ${trade.instrument||'trade'}`);
+        const image=document.createElement('img');
+        image.src=imageButton.dataset.imageSrc;
+        image.alt=`Trade attachment ${index+1}`;
+        image.loading='lazy';
+        imageButton.append(image);
+        if(withOverlay)imageButton.append(make('span','record-image-enlarge','⤢ ENLARGE'));
+        bindImagePreview(imageButton);
+        gallery.append(imageButton);
+      });
+      (trade.videos||[]).forEach((video,index)=>{
+        const videoButton=make('button','video-preview-trigger record-video');
+        videoButton.type='button';
+        videoButton.dataset.videoPreview='';
+        videoButton.dataset.videoSrc=`/trades/${encodeURIComponent(trade.id)}/videos/${encodeURIComponent(video.id)}`;
+        videoButton.dataset.videoMime=video.mime;
+        videoButton.setAttribute('aria-label',`Preview screen recording ${index+1} for ${trade.instrument||'trade'}`);
+        videoButton.append(make('span','video-preview-play'),make('span','video-preview-label',`VIDEO ${index+1}`));
+        gallery.append(videoButton);
+      });
+      if(trade.tradingViewId){
+        const snapshotButton=createTradingViewPreviewButton(trade.tradingViewId,`Preview TradingView snapshot for ${trade.instrument||'trade'}`);
+        if(snapshotButton){
+          snapshotButton.classList.add('record-image');
+          if(withOverlay)snapshotButton.append(make('span','record-image-enlarge','⤢ ENLARGE'));
+          gallery.append(snapshotButton);
+        }
       }
-    }
-    if(recordImages.childElementCount)record.append(recordImages);
-    const appendNote=(label,text,warning)=>{
+      return gallery;
+    };
+    const appendNote=(target,label,text,warning,library=false)=>{
       if(!text)return;
-      const note=make('div',`record-note${warning?' record-note-warning':''}`);
+      const note=make('div',`record-note${warning?' record-note-warning':''}${library?' setup-record-note':''}`);
       const content=make('p','record-note-text',text);
       note.append(make('span','record-label',label),content);
       if(text.length>180||text.split('\n').length>3){
@@ -1403,43 +1568,69 @@ function showDay(date,items){
         });
         note.append(more);
       }else content.classList.toggle('is-expanded',true);
-      record.append(note);
+      target.append(note);
     };
-    appendNote('WHY THE PLAN BROKE',trade.planDeviationReason,true);
-    appendNote('NOTES',trade.notes,false);
-    const actions=make('div','journal-actions record-actions');
-    const edit=make('button','textbutton trade-edit-trigger','EDIT');
-    edit.type='button';
-    edit.setAttribute('aria-label',`Edit ${trade.instrument||'trade'} record`);
-    edit.addEventListener('click',()=>editTrade(trade.id));
-    actions.append(edit);
-    const deleteForm=document.createElement('form');
-    deleteForm.method='post';
-    deleteForm.action=`/trades/${encodeURIComponent(trade.id)}/delete`;
-    deleteForm.addEventListener('submit',event=>{
-      if(!window.confirm('Delete this trade?'))event.preventDefault();
+    const recordImages=makeImages();
+    if(recordImages.childElementCount)record.append(recordImages);
+    appendNote(record,'WHY THE PLAN BROKE',trade.planDeviationReason,true);
+    appendNote(record,'NOTES',trade.notes,false);
+    const {entry,detail,info}=makeListRecord({
+      time,name:tradeNumber,subtitle:trade.instrument||'JOURNAL TRADE',
+      side:trade.side,instrument:trade.instrument,session:trade.session,strategy:trade.strategy,planStatus,planClass,outcome,tone,
+      amount:`${formattedPnl} ${currency}`,pnlClass:amount>0?'pnl-pos':amount<0?'pnl-neg':''
     });
-    const csrf=document.createElement('input');
-    csrf.type='hidden';
-    csrf.name='_csrf';
-    csrf.value=grid.dataset.csrf;
-    const returnTo=document.createElement('input');
-    returnTo.type='hidden';
-    returnTo.name='returnTo';
-    returnTo.value='calendar';
-    const returnDate=document.createElement('input');
-    returnDate.type='hidden';
-    returnDate.name='returnDate';
-    returnDate.value=selectedCalendarDate||trade.date;
-    const remove=make('button','textbutton danger-text','DELETE');
-    remove.type='submit';
-    remove.setAttribute('aria-label',`Delete ${trade.instrument||'trade'} record`);
-    deleteForm.append(csrf,returnTo,returnDate,remove);
-    actions.append(deleteForm);
-    record.append(actions);
+    appendNote(info,'LESSON / NOTES',trade.notes,false,true);
+    appendNote(info,'WHY THE PLAN BROKE',trade.planDeviationReason,true,true);
+    const listChips=make('div','record-chips');
+    listChips.append(make('span',`record-chip ${tone==='win'?'record-chip-good':tone==='loss'?'record-chip-bad':''}`,outcome));
+    [trade.instrument,trade.side,trade.session,currency].filter(Boolean).forEach(value=>listChips.append(make('span','record-chip',value)));
+    listChips.append(make('span',`record-chip ${planClass}`,planStatus));
+    info.append(listChips);
+    if(recordImages.childElementCount){
+      let gallery;
+      entry.addEventListener('toggle',()=>{
+        if(entry.open&&!gallery){
+          gallery=makeImages(false);
+          detail.append(gallery);
+        }
+      });
+    }
+    const makeActions=(className,editLabel,deleteLabel)=>{
+      const actions=make('div',className);
+      const edit=make('button','textbutton trade-edit-trigger',editLabel);
+      edit.type='button';
+      edit.setAttribute('aria-label',`Edit ${trade.instrument||'trade'} record`);
+      edit.addEventListener('click',()=>editTrade(trade.id));
+      actions.append(edit);
+      const deleteForm=document.createElement('form');
+      deleteForm.method='post';
+      deleteForm.action=`/trades/${encodeURIComponent(trade.id)}/delete`;
+      deleteForm.dataset.deleteKind='trade';
+      deleteForm.dataset.deleteName=`${trade.instrument||'Trade'} · ${trade.date}${time?` · ${time}`:''}`;
+      const csrf=document.createElement('input');
+      csrf.type='hidden';
+      csrf.name='_csrf';
+      csrf.value=grid.dataset.csrf;
+      const returnTo=document.createElement('input');
+      returnTo.type='hidden';
+      returnTo.name='returnTo';
+      returnTo.value='calendar';
+      const returnDate=document.createElement('input');
+      returnDate.type='hidden';
+      returnDate.name='returnDate';
+      returnDate.value=selectedCalendarDate||trade.date;
+      const remove=make('button','textbutton danger-text',deleteLabel);
+      remove.type='submit';
+      remove.setAttribute('aria-label',`Delete ${trade.instrument||'trade'} record`);
+      deleteForm.append(csrf,returnTo,returnDate,remove);
+      actions.append(deleteForm);
+      return actions;
+    };
+    record.append(makeActions('journal-actions record-actions','EDIT','DELETE'));
+    detail.append(makeActions('journal-actions','EDIT TRADE','DELETE TRADE'));
     list.append(record);
   });
-  selected.append(list);
+  selected.append(list,dayList);
 }const calendarNet=items=>items.reduce((sum,trade)=>sum+Number(trade.pnl||0),0);
 const calendarTone=value=>value>0?'positive':value<0?'negative':'neutral';
 const calendarMoney=value=>new Intl.NumberFormat('en-US',{
@@ -1757,10 +1948,67 @@ analysisRangeButtons.forEach(button=>button.addEventListener('click',()=>{
   analysisRange=button.dataset.analysisRange;
   renderAnalysis();
 }));
-analysisCurrency.addEventListener('change',()=>{
-  selectedAnalysisCurrency=analysisCurrency.value;
+analysisCurrency.addEventListener('click',event=>{
+  const button=event.target.closest('[data-analysis-currency]');
+  if(!button||button.disabled)return;
+  selectedAnalysisCurrency=button.dataset.analysisCurrency;
+  renderAnalysis();
+  [...analysisCurrency.querySelectorAll('[data-analysis-currency]')]
+    .find(option=>option.dataset.analysisCurrency===selectedAnalysisCurrency)?.focus();
+});
+analysisAccountToggle.addEventListener('click',()=>{
+  const open=analysisAccountMenu.hidden;
+  if(open){
+    draftAnalysisAccounts=new Set(selectedAnalysisAccounts);
+    syncDraftAnalysisAccounts();
+  }
+  setAnalysisAccountMenuOpen(open,!open);
+});
+analysisAccountOptions.addEventListener('change',event=>{
+  const checkbox=event.target;
+  if(!checkbox.matches('input[data-account-key]'))return;
+  if(checkbox.checked)draftAnalysisAccounts.add(checkbox.dataset.accountKey);
+  else draftAnalysisAccounts.delete(checkbox.dataset.accountKey);
+});
+document.getElementById('analysisAccountSelectAll').addEventListener('click',()=>{
+  draftAnalysisAccounts=new Set(allAnalysisAccountKeys);
+  syncDraftAnalysisAccounts();
+});
+document.getElementById('analysisAccountClear').addEventListener('click',()=>{
+  draftAnalysisAccounts.clear();
+  syncDraftAnalysisAccounts();
+});
+document.getElementById('analysisAccountApply').addEventListener('click',()=>{
+  selectedAnalysisAccounts.clear();
+  draftAnalysisAccounts.forEach(key=>selectedAnalysisAccounts.add(key));
+  updateAnalysisAccountSummary();
+  setAnalysisAccountMenuOpen(false,false);
+  renderAnalysis();
+  analysisAccountToggle.focus();
+});
+document.addEventListener('click',event=>{
+  if(!analysisAccountMenu.hidden&&!analysisAccountFilter.contains(event.target)){
+    setAnalysisAccountMenuOpen(false);
+  }
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&!analysisAccountMenu.hidden){
+    setAnalysisAccountMenuOpen(false);
+    analysisAccountToggle.focus();
+  }
+});
+document.getElementById('analysisResetFilters').addEventListener('click',()=>{
+  selectedAnalysisAccounts.clear();
+  allAnalysisAccountKeys.forEach(key=>selectedAnalysisAccounts.add(key));
+  draftAnalysisAccounts=new Set(selectedAnalysisAccounts);
+  syncDraftAnalysisAccounts();
+  updateAnalysisAccountSummary();
+  analysisRange=defaultAnalysisRange;
+  selectedAnalysisCurrency=defaultCalendarCurrency;
+  setAnalysisAccountMenuOpen(false,false);
   renderAnalysis();
 });
+updateAnalysisAccountSummary();
 document.getElementById('prevMonth').addEventListener('click',()=>{
   current.setMonth(current.getMonth()-1);
   renderCalendar();

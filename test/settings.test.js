@@ -153,7 +153,8 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
     todays:[],losses:0,locked:false,lockReason:'',cooldown:false,marketClosed:false,futuresOpeningCountdown:false,availableAt:null,
     availableAtLabel:null,availableAtBulgariaLabel:null,availableAtNyLabel:null,
     nySession:{phase:'Waiting',milestone:'Next',schedule:[]},
-    active:[],checks:[],checklistCompleted:false,today:'2026-11-10',dayKey:()=> '2026-11-10',timeKey:()=> '12:34',limits:user.limits
+    active:[],checks:[],checklistCompleted:false,today:'2026-11-10',dayKey:()=> '2026-11-10',timeKey:()=> '12:34',limits:user.limits,
+    maxTradeImages:10,maxTradeVideos:3,maxImageBytes:5*1024*1024,maxVideoBytes:1e9
   };
   const template=fs.readFileSync(path.join(__dirname,'..','views','dashboard.ejs'),'utf8');
   let html=ejs.render(template,locals);
@@ -161,8 +162,10 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(html,/No setup examples or A\+ trades yet/);
   const withSetup=ejs.render(template,{...locals,setupExamples:[{_id:'1',title:'Example',createdAt:new Date('2026-11-10T09:30:00Z'),outcome:'WIN',currency:'USD',pnl:10,tradeTime:'09:30',session:'New York',accountCount:1,followedPlan:true,images:[]}]});
   assert.match(withSetup,/action="\/setups\/1\/edit"/);
+  assert.match(withSetup,/<dialog id="setupEditDialog1" class="rule-dialog trade-dialog"/);
+  assert.match(withSetup,/data-edit-dialog="setupEditDialog1"/);
   assert.match(withSetup,/SAVED EXAMPLE/);
-  const marked={_id:'2',createdAt:new Date('2026-11-10T10:00:00Z'),instrument:'ES',outcome:'WIN',currency:'USD',pnl:20,isAPlus:true,notes:'<script>',tradingViewId:'AbCd1234',images:[{id:'00000000-0000-0000-0000-000000000000'}]};
+  const marked={_id:'2',createdAt:new Date('2026-11-10T10:00:00Z'),instrument:'ES',outcome:'WIN',currency:'USD',pnl:20,isAPlus:true,notes:'<script>',tradingViewId:'AbCd1234',images:[{id:'00000000-0000-0000-0000-000000000000'}],videos:[{id:'10000000-0000-0000-0000-000000000001',mime:'video/webm'}]};
   const unmarked={...marked,_id:'3',instrument:'Unmarked',isAPlus:false};
   const library=ejs.render(template,{...locals,trades:[marked,unmarked],setupExamples:[{_id:'1',title:'Example',createdAt:new Date('2026-11-10T09:30:00Z'),outcome:'WIN',currency:'USD',pnl:10,tradeTime:'09:30',session:'New York',accountCount:1,followedPlan:true,images:[]}]});
   const librarySection=library.slice(library.indexOf('id="setups"'),library.indexOf('<dialog id="tradeDialog"'));
@@ -170,6 +173,7 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(librarySection,/setup-record-outcome-win">WIN<\/span>/);
   assert.match(librarySection,/class="setup-record-chevron" aria-hidden="true"/);
   assert.match(librarySection,/class="recent-trades-more" href="\/setup-library"/);
+  assert.match(librarySection,/data-video-src="\/trades\/2\/videos\/10000000-0000-0000-0000-000000000001"/);
   assert.doesNotMatch(librarySection,/NET P&amp;L/);
   assert.match(librarySection,/2 SHOWN/);
   assert.match(librarySection,/data-trade-id="2" data-return-to="setups"/);
@@ -184,6 +188,7 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   const selectedSection=selectedHtml.slice(selectedHtml.indexOf('id="setups"'),selectedHtml.indexOf('<dialog id="tradeDialog"'));
   assert.match(selectedSection,/<details class="setup-record" open>/);
   assert.match(selectedSection,/action="\/setups\/old\/edit"/);
+  assert.match(selectedSection,/<dialog id="setupEditDialogold"[^>]+data-open-on-load="true"/);
   assert.equal((selectedSection.match(/<details class="setup-record"/g)||[]).length,6);
   assert.match(selectedSection,/href="\/setup-library"/);
   assert.match(html,/<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg\?v=1">/);
@@ -192,7 +197,11 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(html,/name="currency"[^>]+value="EUR"/);
   assert.match(html,/id="tradeSession"/);
   assert.match(html,/type="time" name="tradeTime" value="12:34" required/);
-  assert.match(html,/data-image-upload data-plan-follow-up data-outcome-pnl/);
+  assert.match(html,/data-image-upload[^>]*data-plan-follow-up data-outcome-pnl/);
+  assert.match(html,/name="videos" accept="video\/mp4,video\/webm" multiple data-video-input/);
+  assert.match(html,/data-max-videos="3" data-max-video-bytes="1000000000"/);
+  assert.match(html,/SCREEN RECORDINGS \(OPTIONAL · UP TO 3 · MP4 OR WEBM · MAX 1 GB EACH\)/);
+  assert.match(html,/ADD SCREEN RECORDINGS \(OPTIONAL · UP TO 3 PER TRADE · MP4 OR WEBM · MAX 1 GB EACH\)/);
   assert.match(html,/<option value="" selected disabled>Choose an outcome<\/option>/);
   assert.match(html,/id="tradeReturnTo" value="calendar"/);
   assert.match(html,/<option value="unknown">Not recorded<\/option>/);
@@ -247,7 +256,9 @@ test('dashboard renders saved settings, hidden widgets and existing accounts',()
   assert.match(readyHtml,/"accountCount":5/);
   const noSetupHtml=ejs.render(template,{...cardLocals,noSetupEntries:[{_id:'entry1',date:'2026-11-10',notes:'<script>unsafe</script>'}]});
   assert.match(noSetupHtml,/NO SETUP PRESENTED · ADD ENTRY/);
-  assert.match(noSetupHtml,/action="\/no-setup\/entry1\/edit"/);
+  assert.match(noSetupHtml,/class="textbutton no-setup-edit-trigger" data-entry-id="entry1" data-return-to="journal"/);
+  assert.match(noSetupHtml,/<dialog id="noSetupDialog" class="rule-dialog trade-dialog"/);
+  assert.match(noSetupHtml,/id="noSetupEditor"/);
   assert.match(noSetupHtml,/action="\/no-setup\/entry1\/delete"/);
   assert.match(noSetupHtml,/&lt;script&gt;unsafe&lt;\/script&gt;/);
   assert.match(noSetupHtml,/not included in the trade CSV/);

@@ -33,10 +33,9 @@ test('image preview zooms, resets, handles errors and opens another image at fit
     imagePreviewViewport:viewport,imageZoomIn:zoomIn,imageZoomOut:zoomOut,imageZoomReset:reset,
     imagePreviewTradingView:tradingViewLink
   };
-  const source=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
-  const block=source.slice(source.indexOf("const imageDialog="),source.indexOf("document.querySelectorAll('.image-preview-trigger')"));
-  const context={document:{getElementById:id=>elements[id]},window:listeners(),Event:class{}};
-  vm.runInNewContext(block,context);
+  const source=fs.readFileSync(path.join(__dirname,'..','public','image-preview.js'),'utf8');
+  const context={document:{getElementById:id=>elements[id],querySelectorAll:()=>[]},window:listeners(),Event:class{}};
+  vm.runInNewContext(source,context);
   const button={...listeners(),dataset:{imageSrc:'/trades/1/image'}};
   context.testButton=button;
   vm.runInNewContext('bindImagePreview(testButton)',context);
@@ -105,7 +104,7 @@ test('image preview zooms, resets, handles errors and opens another image at fit
   assert.equal(tradingViewLink.href,undefined);
 });
 
-test('journal image upload previews multiple files and rejects more than ten',()=>{
+test('journal previews uploads and enforces image count and video size limits',()=>{
   const element=()=>({
     handlers:{},children:[],dataset:{},hidden:false,value:'',files:[],
     addEventListener(event,callback){this.handlers[event]=callback},
@@ -115,9 +114,12 @@ test('journal image upload previews multiple files and rejects more than ten',()
     setAttribute(){}
   });
   const input=element(),preview=element(),error=element(),submit=element(),form=element();
+  const videoInput=element(),videoPreview=element();
   form.querySelector=selector=>({
     '[data-image-input]':input,
     '[data-upload-preview]':preview,
+    '[data-video-input]':videoInput,
+    '[data-video-upload-preview]':videoPreview,
     '.upload-error':error,
     '[type="submit"]':submit
   })[selector];
@@ -147,6 +149,17 @@ test('journal image upload previews multiple files and rejects more than ten',()
   assert.equal(preview.hidden,true);
   assert.equal(error.hidden,false);
   assert.match(error.textContent,/up to 10 images/);
+  const clip={name:'recording.mp4',type:'video/mp4',size:1_000_000_000};
+  videoInput.files=[clip];
+  videoInput.emit('change');
+  assert.equal(videoPreview.hidden,false);
+  assert.equal(videoPreview.children.length,1);
+  assert.equal(error.hidden,true);
+  videoInput.files=[{...clip,size:1_000_000_001}];
+  videoInput.emit('change');
+  assert.equal(videoPreview.hidden,true);
+  assert.equal(error.hidden,false);
+  assert.equal(error.textContent,'Videos must be 1 GB or smaller.');
 });
 
 test('TradingView links render a safe CDN image preview and reject other hosts',()=>{
@@ -163,7 +176,7 @@ test('TradingView links render a safe CDN image preview and reject other hosts',
     '[data-tradingview-preview]':preview
   })[selector]};
   const source=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
-  const block=source.slice(source.indexOf('function tradingViewSnapshotId'),source.indexOf("document.querySelectorAll('.image-preview-trigger')"));
+  const block=source.slice(source.indexOf('function tradingViewSnapshotId'),source.indexOf("document.querySelectorAll('[data-image-upload]')"));
   const context={URL,document:{createElement:node},bindImagePreview:button=>buttonBindings.push(button),form};
   vm.runInNewContext(`${block}\nupdateTradingViewPreview(form)`,context);
   assert.equal(preview.hidden,false);

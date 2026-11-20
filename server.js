@@ -9,8 +9,7 @@ const express = require('express'),
     rateLimit = require('express-rate-limit'),
     crypto = require('crypto'),
     fs = require('fs'),
-    path = require('path'),
-    multer = require('multer');
+    path = require('path');
 const {
     User,
     Rule,
@@ -40,69 +39,52 @@ const {
 const {
     recordReturnTo
 } = require('./lib/navigation');
+const {
+    createMediaUpload,
+    videoType
+} = require('./lib/media-upload');
 const app = express();
 app.set('view engine', 'ejs');
 app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
+const mediaDirectory = path.join(__dirname, 'uploads');
+const maxTradeImages = 10;
+const maxTradeVideos = 3;
+const maxImageBytes = 5 * 1024 * 1024;
+const maxVideoBytes = 1_000_000_000;
 Object.assign(app.locals, {
     preferencesFor,
     settingsTimezones: TIMEZONES,
     settingsCurrencies: CURRENCIES,
-    sessionChoices: SESSION_CHOICES
+    sessionChoices: SESSION_CHOICES,
+    maxTradeImages,
+    maxTradeVideos,
+    maxImageBytes,
+    maxVideoBytes
 });
-const imageDirectory = path.join(__dirname, 'uploads');
-const maxTradeImages = 10;
-fs.mkdirSync(imageDirectory, {
-    recursive: true
+const {
+    receive: receiveTradeMedia,
+    requestImages,
+    requestVideos,
+    discardRequestUploads,
+    removeStoredMedia
+} = createMediaUpload({
+    directory: mediaDirectory,
+    maxImages: maxTradeImages,
+    maxVideos: maxTradeVideos,
+    maxImageBytes,
+    maxVideoBytes
 });
-const imageUpload = multer({
-    storage: multer.diskStorage({
-        destination: imageDirectory,
-        filename: (req, file, done) => done(null, crypto.randomUUID())
-    }),
-    limits: {
-        fileSize: 5 * 1024 * 1024,
-        files: maxTradeImages
-    },
-    fileFilter: (req, file, done) => {
-        if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) return done(null, true);
-        const error = new Error('Only JPEG, PNG, or WebP images are supported.');
-        error.code = 'INVALID_IMAGE_TYPE';
-        done(error)
-    }
-});
-const parseTradeImages = imageUpload.array('images', maxTradeImages);
-
-function receiveTradeImages(req, res, next) {
-    parseTradeImages(req, res, error => {
-        if (!error) return next();
-        if (error instanceof multer.MulterError) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).send(error.code === 'LIMIT_FILE_SIZE' ? 'Images must be 5 MB or smaller.' : `You can upload up to ${maxTradeImages} images at a time.`);
-        if (error.code === 'INVALID_IMAGE_TYPE') return res.status(400).send(error.message);
-        next(error)
-    })
-}
-function requestImages(req) {
-    return req.files || []
-}
-async function discardRequestImages(req) {
-    for (const file of requestImages(req)) {
-        await fs.promises.unlink(file.path).catch(error => {
-            if (error.code !== 'ENOENT') throw error
-        })
-    }
-}
-async function removeStoredImage(id) {
-    if (!id) return;
-    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('Invalid stored trade image identifier.');
-    try {
-        await fs.promises.unlink(path.join(imageDirectory, id))
-    } catch (error) {
-        if (error.code !== 'ENOENT') throw error
-    }
-}
+const receiveTradeImages=receiveTradeMedia;
+const discardRequestImages=discardRequestUploads;
+const removeStoredImage=removeStoredMedia;
+const imageDirectory=mediaDirectory;
 function storedTradeImages(trade) {
     if (!trade) return [];
     if (trade.images && trade.images.length) return trade.images.map(image => ({id: image.id, mime: image.mime}));
     return trade.imageId ? [{id: trade.imageId, mime: trade.imageMime}] : []
+}
+function storedTradeVideos(trade) {
+    return trade && trade.videos ? trade.videos.map(video => ({id: video.id, mime: video.mime})) : [];
 }
 
 function imageType(file) {
@@ -119,7 +101,7 @@ app.use(helmet({
             scriptSrc: ["'self'", "https://widgets.tradingview-widget.com"],
             styleSrc: ["'self'"],
             styleSrcAttr: ["'unsafe-inline'"],
-            imgSrc: ["'self'", "data:", "https://*.tradingview.com", "https://*.tradingview-widget.com"],
+            imgSrc: ["'self'", "data:", "blob:", "https://*.tradingview.com", "https://*.tradingview-widget.com"],
             connectSrc: ["'self'", "https://*.tradingview.com", "https://*.tradingview-widget.com"],
             frameSrc: ["https://*.tradingview.com", "https://*.tradingview-widget.com"]
         }
@@ -339,9 +321,9 @@ app.use('/settings', require('./routes/settings')({
 app.use('/no-setup', require('./routes/no-setup')({NoSetup,auth,validId}));
 app.use('/check', require('./routes/checklist')({User,auth,stateFor}));
 app.use('/setups', require('./routes/setups')({
-    SetupExample,auth,validId,receiveTradeImages,requestImages,discardRequestImages,
-    removeStoredImage,storedTradeImages,imageType,imageDirectory,maxTradeImages,
-    validTradeTime
+    SetupExample,auth,validId,receiveTradeImages,requestImages,requestVideos,discardRequestImages,
+    removeStoredImage,storedTradeImages,storedTradeVideos,imageType,videoType,imageDirectory,
+    maxTradeImages,maxTradeVideos,maxVideoBytes,validTradeTime
 }));
 app.use('/setup-library', require('./routes/setup-library')({SetupExample,Trade,User,auth,dayKey,timeKey,zonedTime,startOfNextDay}));
 async function dashboard(req, res) {
@@ -701,6 +683,12 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
             await discardRequestImages(req);
             return res.status(400).send('The selected file is not a supported JPEG, PNG, or WebP image.')
         }
+        const videoFiles = requestVideos(req),
+            videos = videoFiles.map(file => ({id:file.filename,mime:videoType(file)}));
+        if (videos.some((video,index) => !video.mime || video.mime !== videoFiles[index].mimetype)) {
+            await discardRequestImages(req);
+            return res.status(400).send('The selected file is not a supported MP4 or WebM video.')
+        }
         const user = await User.findById(req.session.user.id),
             state = await stateFor(user),
             activeRuleIds = (await Rule.find({user:user._id,active:true}).select('_id').lean()).map(r=>String(r._id)),
@@ -723,6 +711,7 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
                 tradeTime,
                 createdAt,
                 images,
+                videos,
                 tradingViewId,
                 followedPlan,
                 isAPlus: req.body.isAPlus === 'on'
@@ -739,7 +728,7 @@ app.post('/trades', auth, receiveTradeImages, async (req, res, next) => {
         });
         res.redirect('/#journal')
     } catch (e) {
-        if (!committed && requestImages(req).length) await discardRequestImages(req).catch(cleanupError => console.error('Unable to remove rejected trade images:', cleanupError));
+        if (!committed && (requestImages(req).length || requestVideos(req).length)) await discardRequestImages(req).catch(cleanupError => console.error('Unable to remove rejected trade uploads:', cleanupError));
         next(e)
     }
 });
@@ -819,6 +808,12 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
             await discardRequestImages(req);
             return res.status(400).send('The selected file is not a supported JPEG, PNG, or WebP image.')
         }
+        const videoFiles = requestVideos(req),
+            uploadedVideos = videoFiles.map(file => ({id:file.filename,mime:videoType(file)}));
+        if (uploadedVideos.some((video,index) => !video.mime || video.mime !== videoFiles[index].mimetype)) {
+            await discardRequestImages(req);
+            return res.status(400).send('The selected file is not a supported MP4 or WebM video.')
+        }
         const trade = await Trade.findOne({
             _id: req.params.id,
             user: req.session.user.id
@@ -828,13 +823,22 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
             return res.sendStatus(404)
         }
         const previousImages = storedTradeImages(trade);
+        const previousVideos = storedTradeVideos(trade);
         const requestedRemovals = req.body.removeImages === undefined ? [] :
             Array.isArray(req.body.removeImages) ? req.body.removeImages : [req.body.removeImages];
         const removeIds = new Set(requestedRemovals.filter(id => typeof id === 'string'));
         const retainedImages = previousImages.filter(image => !removeIds.has(image.id));
+        const requestedVideoRemovals = req.body.removeVideos === undefined ? [] :
+            Array.isArray(req.body.removeVideos) ? req.body.removeVideos : [req.body.removeVideos];
+        const removeVideoIds = new Set(requestedVideoRemovals.filter(id => typeof id === 'string'));
+        const retainedVideos = previousVideos.filter(video => !removeVideoIds.has(video.id));
         if (retainedImages.length + uploadedImages.length > maxTradeImages) {
             await discardRequestImages(req);
             return fail(req, `A trade can have up to ${maxTradeImages} images. Remove an image before adding another.`, recordReturnTo(req.body))
+        }
+        if (retainedVideos.length + uploadedVideos.length > maxTradeVideos) {
+            await discardRequestImages(req);
+            return fail(req, `A trade can have up to ${maxTradeVideos} videos. Remove a video before adding another.`, recordReturnTo(req.body))
         }
         trade.account = account;
         if (accountCount !== undefined) trade.accountCount = accountCount;
@@ -853,15 +857,18 @@ app.post('/trades/:id/edit', auth, receiveTradeImages, async (req, res, next) =>
         if (req.body.aPlusPresent === '1') trade.isAPlus = req.body.isAPlus === 'on';
         if (hasTradingViewUrl) trade.tradingViewId = tradingViewId;
         trade.images = [...retainedImages, ...uploadedImages];
+        trade.videos = [...retainedVideos, ...uploadedVideos];
         trade.imageId = '';
         trade.imageMime = '';
         await trade.save();
         committed = true;
         const removedImages = previousImages.filter(image => removeIds.has(image.id));
         for (const image of removedImages) await removeStoredImage(image.id);
+        const removedVideos = previousVideos.filter(video => removeVideoIds.has(video.id));
+        for (const video of removedVideos) await removeStoredImage(video.id);
         res.redirect(recordReturnTo(req.body))
     } catch (e) {
-        if (!committed && requestImages(req).length) await discardRequestImages(req).catch(cleanupError => console.error('Unable to remove rejected trade images:', cleanupError));
+        if (!committed && (requestImages(req).length || requestVideos(req).length)) await discardRequestImages(req).catch(cleanupError => console.error('Unable to remove rejected trade uploads:', cleanupError));
         next(e)
     }
 });
@@ -876,9 +883,23 @@ app.get('/trades/:id/images/:imageId', auth, async (req, res, next) => {
         if (!image || !image.mime) return res.sendStatus(404);
         res.set('Cache-Control', 'private, no-store');
         res.set('X-Content-Type-Options', 'nosniff');
-        res.type(image.mime).sendFile(path.join(imageDirectory, image.id), error => {
-            if (error) next(error)
-        })
+        res.type(image.mime).sendFile(path.join(imageDirectory, image.id))
+    } catch (e) {
+        next(e)
+    }
+});
+app.get('/trades/:id/videos/:videoId', auth, async (req, res, next) => {
+    try {
+        if (!validId(req.params.id) || !/^[0-9a-f-]{36}$/i.test(req.params.videoId)) return res.sendStatus(404);
+        const trade = await Trade.findOne({
+            _id: req.params.id,
+            user: req.session.user.id
+        }).select('videos').lean();
+        const video = trade && storedTradeVideos(trade).find(item => item.id === req.params.videoId);
+        if (!video || !video.mime) return res.sendStatus(404);
+        res.set('Cache-Control', 'private, no-store');
+        res.set('X-Content-Type-Options', 'nosniff');
+        res.type(video.mime).sendFile(path.join(mediaDirectory, video.id))
     } catch (e) {
         next(e)
     }
@@ -891,6 +912,7 @@ app.post('/trades/:id/delete', auth, async (req, res, next) => {
             user: req.session.user.id
         });
         for (const image of storedTradeImages(trade)) await removeStoredImage(image.id);
+        for (const video of storedTradeVideos(trade)) await removeStoredImage(video.id);
         res.redirect(recordReturnTo(req.body))
     } catch (e) {
         next(e)
@@ -929,6 +951,7 @@ app.get('/export', auth, async (req, res, next) => {
     }
 });
 app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
     console.error(err);
     res.status(500).send('Something went wrong. Please try again.')
 });

@@ -1,6 +1,8 @@
 <% const record=item.record, isJournal=item.isJournal, standalone=typeof libraryPage!=='undefined' && libraryPage;
    const images=record.images && record.images.length ? record.images : (record.imageId ? [{id:record.imageId}] : []);
+   const videos=record.videos || [];
    const imageRoot=isJournal?'/trades/':'/setups/';
+   const videoRoot=imageRoot;
    const outcomeTone=record.outcome==='WIN'?'win':record.outcome==='LOSS'?'loss':'even'; %>
 <details class="setup-record" <%= typeof selectedSetup!=='undefined' && selectedSetup && !isJournal && String(selectedSetup._id)===String(record._id)?'open':'' %>>
   <summary class="recent-trade-row">
@@ -52,18 +54,15 @@
     </div>
     <div class="record-images">
       <% images.forEach((image,index)=>{ const src=imageRoot+record._id+'/images/'+image.id; %>
-        <% if(standalone){ %>
-          <a class="image-preview-trigger" href="<%= src %>" target="_blank" rel="noopener noreferrer" aria-label="Open image <%= index+1 %> in a new tab"><img src="<%= src %>" alt="Record image <%= index+1 %>" loading="lazy"></a>
-        <% }else{ %>
-          <button type="button" class="image-preview-trigger" data-image-src="<%= src %>" aria-label="Preview image <%= index+1 %>"><img src="<%= src %>" alt="Record image <%= index+1 %>" loading="lazy"></button>
-        <% } %>
+        <button type="button" class="image-preview-trigger" data-image-src="<%= src %>" aria-label="Preview image <%= index+1 %>"><img src="<%= src %>" alt="Record image <%= index+1 %>" loading="lazy"></button>
+      <% }) %>
+      <% videos.forEach((video,index)=>{ const src=videoRoot+record._id+'/videos/'+video.id; %>
+        <button type="button" class="video-preview-trigger" data-video-preview data-video-src="<%= src %>" data-video-mime="<%= video.mime %>" aria-label="Preview video <%= index+1 %>">
+          <span class="video-preview-play" aria-hidden="true"></span><span class="video-preview-label">VIDEO <%= index+1 %></span>
+        </button>
       <% }) %>
       <% if(record.tradingViewId && /^[a-z0-9]{8}$/i.test(record.tradingViewId)){ const snapshot='https://s3.tradingview.com/snapshots/'+record.tradingViewId[0].toLowerCase()+'/'+record.tradingViewId+'.png'; %>
-        <% if(standalone){ %>
-          <a class="image-preview-trigger" href="https://www.tradingview.com/x/<%= record.tradingViewId %>/" target="_blank" rel="noopener noreferrer" aria-label="Open TradingView snapshot in a new tab"><img src="<%= snapshot %>" alt="TradingView snapshot" loading="lazy"></a>
-        <% }else{ %>
-          <button type="button" class="image-preview-trigger" data-image-src="<%= snapshot %>" data-trading-view-id="<%= record.tradingViewId %>" aria-label="Preview TradingView snapshot"><img src="<%= snapshot %>" alt="TradingView snapshot" loading="lazy"></button>
-        <% } %>
+        <button type="button" class="image-preview-trigger" data-image-src="<%= snapshot %>" data-trading-view-id="<%= record.tradingViewId %>" aria-label="Preview TradingView snapshot"><img src="<%= snapshot %>" alt="TradingView snapshot" loading="lazy"></button>
       <% } %>
     </div>
     <% if(standalone){ %>
@@ -71,7 +70,9 @@
         <% if(isJournal){ %>
           <a class="textbutton" href="/?calendarDate=<%= encodeURIComponent(date) %>#calendar">OPEN TRADE IN CALENDAR</a>
         <% }else{ %>
-          <a class="textbutton" href="/?setupId=<%= encodeURIComponent(String(record._id)) %>#setups">EDIT OR DELETE EXAMPLE</a>
+          <a class="textbutton" href="/?setupId=<%= encodeURIComponent(String(record._id)) %>#setups">EDIT EXAMPLE</a>
+          <button type="button" class="textbutton danger-text" aria-haspopup="dialog" aria-controls="setupDeleteDialog"
+            data-setup-delete="/setups/<%= record._id %>/delete" data-setup-title="<%= record.title %>">DELETE EXAMPLE</button>
         <% } %>
       </div>
     <% }else if(isJournal){ %>
@@ -80,14 +81,25 @@
         <a class="textbutton" href="/?calendarDate=<%= encodeURIComponent(date) %>#calendar">OPEN IN CALENDAR</a>
       </div>
     <% }else{ %>
-      <details <%= typeof selectedSetup!=='undefined' && selectedSetup && String(selectedSetup._id)===String(record._id)?'open':'' %>>
-        <summary>EDIT EXAMPLE</summary>
-        <%- include('setup-form', {setup:record,preferences}) %>
-      </details>
-      <form method="post" action="/setups/<%= record._id %>/delete" data-confirm="Delete this setup example?">
-        <input type="hidden" name="_csrf" value="<%= csrf %>">
-        <button type="submit" class="textbutton danger-text">DELETE EXAMPLE</button>
-      </form>
+      <div class="journal-actions">
+        <button type="button" class="textbutton" data-edit-dialog="setupEditDialog<%= record._id %>" aria-haspopup="dialog" aria-controls="setupEditDialog<%= record._id %>">EDIT EXAMPLE</button>
+        <button type="button" class="textbutton danger-text" aria-haspopup="dialog" aria-controls="setupDeleteDialog"
+          data-setup-delete="/setups/<%= record._id %>/delete" data-setup-title="<%= record.title %>">DELETE EXAMPLE</button>
+      </div>
     <% } %>
   </div>
 </details>
+<% if(!standalone && !isJournal){ %>
+  <dialog id="setupEditDialog<%= record._id %>" class="rule-dialog trade-dialog" aria-labelledby="setupEditTitle<%= record._id %>" data-record-editor data-open-on-load="<%= typeof selectedSetup!=='undefined' && selectedSetup && String(selectedSetup._id)===String(record._id)?'true':'false' %>">
+    <div class="rule-dialog-head">
+      <div>
+        <div class="eyebrow">A+ SETUPS / SAVED EXAMPLE</div>
+        <h2 id="setupEditTitle<%= record._id %>">EDIT EXAMPLE</h2>
+      </div>
+      <form method="dialog" class="dialog-close-form">
+        <button type="submit" class="rule-dialog-close ghost" aria-label="Close dialog">✕</button>
+      </form>
+    </div>
+    <%- include('setup-form', {setup:record,preferences}) %>
+  </dialog>
+<% } %>
